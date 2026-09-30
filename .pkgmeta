@@ -1,0 +1,4 @@
+package-as: SpellCDTracker
+ignore:
+  - README.md
+  - docs
