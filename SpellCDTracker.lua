@@ -1,4 +1,4 @@
--- SpellCDTracker
+-- Spell Cooldown Tracker (folder and saved variables keep the name SpellCDTracker)
 -- 1) Cooldown row: an icon appears only while a spell is on cooldown.
 -- 2) Paladin panel: Seal countdown, Aura on/off indicators, "my Blessing on me" check.
 -- 3) Minimap button + options window (sizes, lock, reset).
@@ -55,7 +55,7 @@ local function Guard(fn, ...)
         err = tostring(err)
         if not seenErr[err] then
             seenErr[err] = true
-            print("|cffff5555SpellCDTracker error:|r " .. err)
+            print("|cffff5555Spell Cooldown Tracker error:|r " .. err)
         end
     end
     return ok
@@ -1510,7 +1510,7 @@ local function BuildOptions()
 
     local title = options:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -18)
-    title:SetText("SpellCDTracker")
+    title:SetText("Spell Cooldown Tracker")
 
     local close = CreateFrame("Button", nil, options, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", -6, -6)
@@ -1617,7 +1617,7 @@ local function BuildMinimapButton()
     mm:SetScript("OnClick", function() ToggleOptions() end)
     mm:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:AddLine("SpellCDTracker")
+        GameTooltip:AddLine("Spell Cooldown Tracker")
         GameTooltip:AddLine("Click: options", 1, 1, 1)
         GameTooltip:AddLine("Drag: move button", 1, 1, 1)
         GameTooltip:Show()
@@ -1651,7 +1651,7 @@ end
 local function Debug(arg)
     local count = 0
     for _ in pairs(known) do count = count + 1 end
-    print(string.format("SpellCDTracker: %d spells tracked | in combat: %s | auras locked: %s | secret API: %s",
+    print(string.format("Spell Cooldown Tracker: %d spells tracked | in combat: %s | auras locked: %s | secret API: %s",
         count, tostring(InCombat() and true or false), tostring(AurasLocked()), tostring(issecretvalue ~= nil)))
     local names = (arg and arg ~= "") and { arg } or { "Judgement", "Judgment", "Holy Strike", "Consecration" }
     local swingFound = {}
@@ -1779,22 +1779,22 @@ SlashCmdList["SPELLCDTRACKER"] = function(msg)
         ToggleOptions()
     elseif cmd == "edit" then
         SetEditMode(not editMode)
-        print("SpellCDTracker: edit mode " .. (editMode and "ON - drag the green boxes" or "OFF"))
+        print("Spell Cooldown Tracker: edit mode " .. (editMode and "ON - drag the green boxes" or "OFF"))
     elseif cmd == "swing" then
         db.swingCombatOnly = not db.swingCombatOnly
-        print("SpellCDTracker: swing timer " .. (db.swingCombatOnly and "shows only in combat" or "always visible (untouched)"))
+        print("Spell Cooldown Tracker: swing timer " .. (db.swingCombatOnly and "shows only in combat" or "always visible (untouched)"))
     elseif cmd == "lock" then
-        SetEditMode(false); print("SpellCDTracker: edit mode OFF")
+        SetEditMode(false); print("Spell Cooldown Tracker: edit mode OFF")
     elseif cmd == "unlock" then
-        SetEditMode(true); print("SpellCDTracker: edit mode ON - drag the green boxes")
+        SetEditMode(true); print("Spell Cooldown Tracker: edit mode ON - drag the green boxes")
     elseif cmd == "size" and tonumber(rest) then
         local v = math.max(16, math.min(96, tonumber(rest)))
         db.cdSize, db.palaSize = v, v
-        print("SpellCDTracker: icon size " .. v)
+        print("Spell Cooldown Tracker: icon size " .. v)
     elseif cmd == "ignore" and rest ~= "" then
-        currentProf.ignore[rest:lower()] = true; print("SpellCDTracker: no longer tracking " .. rest .. " (" .. tostring(profileLabel) .. ")")
+        currentProf.ignore[rest:lower()] = true; print("Spell Cooldown Tracker: no longer tracking " .. rest .. " (" .. tostring(profileLabel) .. ")")
     elseif cmd == "unignore" and rest ~= "" then
-        currentProf.ignore[rest:lower()] = nil; print("SpellCDTracker: tracking " .. rest .. " again (" .. tostring(profileLabel) .. ")")
+        currentProf.ignore[rest:lower()] = nil; print("Spell Cooldown Tracker: tracking " .. rest .. " again (" .. tostring(profileLabel) .. ")")
     elseif cmd == "spells" or cmd == "track" then
         ToggleSpells()
     elseif cmd == "reset" then
@@ -1803,10 +1803,10 @@ SlashCmdList["SPELLCDTRACKER"] = function(msg)
         if palaFrame then ApplyPosition(palaFrame, "pala") end
         db.buff = CopyTable(defaults.buff); db.pbuff = CopyTable(defaults.pbuff)
         if buffFrame then ApplyPosition(buffFrame, BUFF_KEY) end
-        print("SpellCDTracker: positions reset")
+        print("Spell Cooldown Tracker: positions reset")
     elseif cmd == "debug" then
         Debug(rest)
     else
-        print("SpellCDTracker: /scdt (options) | spells | edit | swing | size <n> | ignore <spell> | unignore <spell> | reset | debug [spell]")
+        print("Spell Cooldown Tracker: /scdt (options) | spells | edit | swing | size <n> | ignore <spell> | unignore <spell> | reset | debug [spell]")
     end
 end
