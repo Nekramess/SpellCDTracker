@@ -2,7 +2,7 @@
 ## Title: SpellCDTracker
 ## Notes: Icons only when needed: cooldowns, buffs, totems, Seals/Auras, pet and weapon-enchant reminders, per class and spec. Swing timer in combat only.
 ## Author: Anthony
-## Version: 0.10.2
+## Version: 0.10.3
 ## SavedVariables: SpellCDTrackerDB
 
 SpellCDTracker.lua
