@@ -1,8 +1,8 @@
 ## Interface: 16001
-## Title: SpellCDTracker
+## Title: Spell Cooldown Tracker
 ## Notes: Icons only when needed: cooldowns, buffs, totems, Seals/Auras, pet and weapon-enchant reminders, per class and spec. Swing timer in combat only.
 ## Author: Anthony
-## Version: 0.10.3
+## Version: 0.10.4
 ## SavedVariables: SpellCDTrackerDB
 
 SpellCDTracker.lua
