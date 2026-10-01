@@ -1,0 +1,48 @@
+# Builds <Addon>-v<Version>-forever.zip and attaches it to a GitHub Release.
+# Two ways to run it:
+#   - Actions tab > Package > Run workflow: makes release v<Version> from the .toc version
+#   - Push a tag like v1.2.3: makes that release (the tag must match the .toc version)
+name: Package
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build zip
+        id: build
+        run: |
+          zip=$(bash tools/package.sh dist)
+          version=$(basename "$zip" | sed -E 's/^.*-v(.+)-forever\.zip$/\1/')
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "Built $(basename "$zip")"
+
+      - name: Check tag matches .toc version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if [ "$GITHUB_REF_NAME" != "${{ steps.build.outputs.tag }}" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match the .toc version (${{ steps.build.outputs.tag }})."
+            exit 1
+          fi
+
+      - name: Create GitHub release with the zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.build.outputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists. Bump '## Version' in the .toc first."
+            exit 1
+          fi
+          gh release create "$tag" "${{ steps.build.outputs.zip }}" \
+            --target "$GITHUB_SHA" --title "$tag" --generate-notes
