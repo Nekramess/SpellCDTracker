@@ -15,6 +15,7 @@ local defaults = {
     textScale = 100,      -- percent
     minimapAngle = 200,
     minimapHide = false,
+    readyAlways = false,      -- pinned abilities: show grayed-out when ready in combat only (false) or always (true)
     swingCombatOnly = true,   -- hide Forever's built-in swing timer bars out of combat
     cd   = { point = "CENTER", relPoint = "CENTER", x = 0, y = -150 },
     pala = { point = "CENTER", relPoint = "CENTER", x = 0, y = -215 },
@@ -73,6 +74,20 @@ end
 ------------------------------------------------------------------------
 local currentProf, profileKey, profileLabel, profileHook
 local EMPTY_PROF = { ignore = {} }   -- read-only placeholder, never modified
+
+-- "Pinned" abilities keep their icon on screen in combat while ready (grayed out), and show the
+-- normal countdown while on cooldown. Until you change a profile's pins, these defaults apply.
+local PIN_DEFAULTS = {
+    PALADIN = { "judgement", "holy strike" },
+}
+local function DefaultPins(class)
+    local t = {}
+    for _, n in ipairs(PIN_DEFAULTS[class] or {}) do t[n] = true end
+    return t
+end
+local function PinsOf(prof, class)
+    return (prof and prof.pin) or DefaultPins(class or playerClass)
+end
 
 local CLASS_ORDER = { "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "SHAMAN", "MAGE", "WARLOCK", "DRUID" }
 -- display names for classes other than the one you are playing; your own class uses the game's names
@@ -396,24 +411,34 @@ local function UpdateCooldowns()
     local now = GetTime()
     local active = {}
     local ignore = (currentProf and currentProf.ignore) or {}
+    local pins = PinsOf(currentProf, playerClass)
+    local showReady = InCombat() or db.readyAlways
     for name, s in pairs(known) do
-        if not ignore[name:lower()] then
+        local lname = name:lower()
+        if not ignore[lname] then
+            local pinned = pins[lname] and true or false
             local kind, start, dur = ReadCooldown(s)
             if kind == "known" then
                 s.seenAt = s.seenAt or now
-                active[#active + 1] = { s = s, kind = kind, start = start, dur = dur,
+                active[#active + 1] = { s = s, kind = kind, start = start, dur = dur, pinned = pinned,
                                         rem = start + dur - now, order = s.seenAt }
             elseif kind == "secret" then
                 s.seenAt = s.seenAt or now
-                active[#active + 1] = { s = s, kind = kind, rem = math.huge, order = s.seenAt }
+                active[#active + 1] = { s = s, kind = kind, pinned = pinned, rem = math.huge, order = s.seenAt }
             else
                 s.seenAt = nil
+                if pinned and showReady then
+                    -- ready: stays on screen, grayed out
+                    active[#active + 1] = { s = s, kind = "ready", pinned = true, rem = 0, order = 0 }
+                end
             end
         else
             s.seenAt = nil
         end
     end
     table.sort(active, function(a, b)
+        if a.pinned ~= b.pinned then return a.pinned end          -- pinned abilities first, in a fixed order
+        if a.pinned then return a.s.name < b.s.name end
         if a.rem ~= b.rem then return a.rem < b.rem end
         return a.order < b.order
     end)
@@ -437,8 +462,16 @@ local function UpdateCooldowns()
         local off = (i - 1) * (size + GAP) - (n * (size + GAP) - GAP) / 2 + size / 2
         ic:SetPoint("CENTER", cdFrame, "CENTER", off, 0)
         ic.icon:SetTexture(a.s.icon)
+        ic.icon:SetDesaturated(false)
+        ic:SetAlpha(1)
 
-        if a.kind == "known" then
+        if a.kind == "ready" then
+            ic.boundSpell = nil
+            ic.cd:Clear()
+            ic.text:SetText("")
+            ic.icon:SetDesaturated(true)
+            ic:SetAlpha(0.55)
+        elseif a.kind == "known" then
             ic.boundSpell = nil
             ic.cd:SetHideCountdownNumbers(true)
             ic.cd:SetCooldown(a.start, a.dur)
@@ -1256,6 +1289,7 @@ local function RefreshSpells()
             row.icon:SetTexture(e.icon or GENERIC_ICON)
             row.text:SetText(e.name)
             row.check:SetChecked(not prof.ignore[e.name:lower()])
+            row.pin:SetChecked((PinsOf(prof, selClass))[e.name:lower()] and true or false)
             row:Show()
         else
             win.rowSpell[i] = nil
@@ -1403,7 +1437,10 @@ local function BuildSpells()
 
     win.note = win:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     win.note:SetPoint("TOPLEFT", 232, -186)
-    win.note:SetWidth(224)
+    win.note:SetWidth(190)
+    win.pinHeader = win:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    win.pinHeader:SetPoint("TOPRIGHT", win, "TOPRIGHT", -28, -210)
+    win.pinHeader:SetText("Show when ready")
     win.note:SetJustifyH("LEFT")
     win.note:SetTextColor(0.75, 0.75, 0.75)
 
@@ -1433,8 +1470,27 @@ local function BuildSpells()
         row.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
         row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
         row.text:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
-        row.text:SetWidth(360)
+        row.text:SetWidth(290)
         row.text:SetJustifyH("LEFT")
+        row.pin = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+        row.pin:SetSize(24, 24)
+        row.pin:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+        row.pin:SetScript("OnClick", function(self)
+            local name = win.rowSpell[i]
+            if name then
+                local p = EditProf()
+                if not p.pin then p.pin = DefaultPins(selClass) end
+                p.pin[name:lower()] = self:GetChecked() and true or nil
+                RefreshSpells()
+            end
+        end)
+        row.pin:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+            GameTooltip:AddLine("Show when ready")
+            GameTooltip:AddLine("Keeps this ability on screen in combat while it is ready, grayed out.", 0.8, 0.8, 0.8, true)
+            GameTooltip:Show()
+        end)
+        row.pin:SetScript("OnLeave", function() GameTooltip:Hide() end)
         row.check:SetScript("OnClick", function(self)
             local name = win.rowSpell[i]
             if name then
@@ -1490,7 +1546,7 @@ local function UpdateMinimapButton() end   -- replaced below
 local function BuildOptions()
     local tmpl = BackdropTemplateMixin and "BackdropTemplate" or nil
     options = CreateFrame("Frame", "SpellCDTrackerOptions", UIParent, tmpl)
-    options:SetSize(280, isPaladin and 380 or 330)
+    options:SetSize(280, isPaladin and 410 or 360)
     options:SetPoint("CENTER")
     options:SetFrameStrata("DIALOG")
     options:SetMovable(true)
@@ -1542,6 +1598,9 @@ local function BuildOptions()
     y = y - 34
     MakeCheck(options, "Swing timer only in combat",
         function() return db.swingCombatOnly end, function(v) db.swingCombatOnly = v end, y)
+    y = y - 30
+    MakeCheck(options, "Ready icons also out of combat",
+        function() return db.readyAlways end, function(v) db.readyAlways = v end, y)
     y = y - 30
     MakeCheck(options, "Hide minimap button",
         function() return db.minimapHide end, function(v) db.minimapHide = v; UpdateMinimapButton() end, y)
