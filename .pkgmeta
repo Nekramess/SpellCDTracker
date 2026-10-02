@@ -4,4 +4,3 @@ ignore:
   - docs
   - tools
   - .github
-  - CLAUDE.md
