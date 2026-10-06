@@ -969,6 +969,68 @@ local function ReadTotems()
     end
 end
 
+
+------------------------------------------------------------------------
+-- gear check: warn when the equipped weapons don't fit the class
+--   Paladin / Warrior / Shaman / Rogue: a one-hander (or an empty main hand) needs something in the
+--   off hand (shield, weapon or held item); a two-hander is fine. Hunter: needs a ranged weapon.
+--   This is a rule of thumb, not spec detection, and can be switched off per class/spec.
+------------------------------------------------------------------------
+local GEAR_RULES = {
+    PALADIN = { offhand = true },
+    WARRIOR = { offhand = true },
+    SHAMAN  = { offhand = true },
+    ROGUE   = { offhand = true },
+    HUNTER  = { ranged = true },
+}
+local gearRule = GEAR_RULES[playerClass]
+local GEAR_ICONS = {
+    main    = "Interface\\PaperDoll\\UI-PaperDoll-Slot-MainHand",
+    offhand = "Interface\\PaperDoll\\UI-PaperDoll-Slot-SecondaryHand",
+    ranged  = "Interface\\PaperDoll\\UI-PaperDoll-Slot-Ranged",
+}
+local TWO_HAND = { INVTYPE_2HWEAPON = true }
+local RANGED_LOC = { INVTYPE_RANGED = true, INVTYPE_RANGEDRIGHT = true, INVTYPE_THROWN = true }
+local OFFHAND_OK = { INVTYPE_SHIELD = true, INVTYPE_WEAPON = true, INVTYPE_WEAPONOFFHAND = true, INVTYPE_HOLDABLE = true }
+
+local gearWarn = {}        -- list of keys from GEAR_ICONS that are a problem right now
+local gearAt = 0           -- last time we checked (0 = check on the next tick)
+local gearInfo = ""        -- what we saw, for /scdt debug
+
+local function SlotLoc(slot)
+    if not GetInventoryItemID then return nil end
+    local ok, id = pcall(GetInventoryItemID, "player", slot)
+    if not ok or issecret(id) or not id then return nil, nil end
+    local info = C_Item and C_Item.GetItemInfoInstant or GetItemInfoInstant
+    if not info then return nil, id end
+    local ok2, _, _, _, loc = pcall(info, id)
+    if ok2 and type(loc) == "string" and not issecret(loc) and loc ~= "" then return loc, id end
+    return nil, id
+end
+
+local function CheckGear()
+    gearWarn = {}
+    if not gearRule or not GetInventoryItemID then gearInfo = "equipment API missing"; return end
+    local main, mainId = SlotLoc(16)
+    local off, offId = SlotLoc(17)
+    local rng, rngId = SlotLoc(18)
+    gearInfo = string.format("main=%s(%s) off=%s(%s) ranged=%s(%s)", tostring(main), tostring(mainId),
+        tostring(off), tostring(offId), tostring(rng), tostring(rngId))
+    if gearRule.ranged then
+        -- a ranged weapon can sit in the ranged slot or (in some clients) the main hand
+        if not (RANGED_LOC[rng or ""] or RANGED_LOC[main or ""] or (rngId and not rng) or (mainId and not main)) then
+            gearWarn[#gearWarn + 1] = "ranged"
+        end
+    elseif gearRule.offhand then
+        if not mainId then
+            gearWarn[#gearWarn + 1] = "main"
+        elseif main and not TWO_HAND[main] and not RANGED_LOC[main] then
+            -- one-hander: wants an off-hand item (unknown item type with an id present counts as filled)
+            if not offId then gearWarn[#gearWarn + 1] = "offhand" end
+        end
+    end
+end
+
 local function BuildBuffs()
     buffFrame = CreateFrame("Frame", "SpellCDTrackerBuffFrame", UIParent)
     buffFrame.icons = {}
@@ -1021,6 +1083,18 @@ local function UpdateBuffs()
             if warnBelow and rem <= warnBelow then SetBorder(ic, 1, 0.2, 0.2) else SetBorder(ic, 0, 0, 0) end
         else
             ic.cd:Clear(); ic.text:SetText(""); SetBorder(ic, 0, 0, 0)
+        end
+    end
+
+    -- gear warnings come first: a missing off hand / ranged weapon is something to fix before combat
+    if gearRule and (prof.gear ~= false) then
+        if GetTime() - gearAt >= 1 then
+            gearAt = GetTime()
+            Guard(CheckGear)
+        end
+        for _, key in ipairs(gearWarn) do
+            local ic = slot_()
+            if ic then ShowMissing(ic, GEAR_ICONS[key], "") end
         end
     end
 
@@ -1275,6 +1349,10 @@ local function RefreshSpells()
 
     -- Paladin indicator toggles belong to the Paladin class only
     for _, cb in ipairs(win.toggles) do cb:SetShown(selClass == "PALADIN") end
+    local hasGear = GEAR_RULES[selClass] ~= nil
+    win.gearToggle:SetShown(hasGear)
+    win.gearToggle:ClearAllPoints()
+    win.gearToggle:SetPoint("TOPLEFT", win, "TOPLEFT", selClass == "PALADIN" and 372 or 20, -158)
 
     spellList = ListSpells(selClass)
     local maxOff = math.max(0, #spellList - SPELL_ROWS)
@@ -1417,6 +1495,12 @@ local function BuildSpells()
             function(v) EditProf()[key] = v; RefreshSpells() end,
             -158, spellsRefreshers, it[3])
     end
+
+    -- gear warnings toggle (classes with a weapon rule); sits at the right on Paladin, at the left otherwise
+    win.gearToggle = MakeCheck(win, "Gear warning",
+        function() return ViewProf().gear ~= false end,
+        function(v) EditProf().gear = v; RefreshSpells() end,
+        -158, spellsRefreshers, 20)
 
     -- track all / none, spec note, reset
     local all = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
@@ -1726,6 +1810,9 @@ local function Debug(arg)
             .. tostring(imbueState.main and true or false) .. "/" .. tostring(imbueState.off and true or false)
             .. " | source: " .. tostring(imbueApi) .. " | raw: " .. tostring(imbueRaw)) or ""))
     end
+    if gearRule then
+        print("  gear: " .. (#gearWarn > 0 and ("WARNING " .. table.concat(gearWarn, ", ")) or "ok") .. " | " .. gearInfo)
+    end
     for _, n in ipairs(SWING_FRAMES) do
         swingFound[#swingFound + 1] = n .. (_G[n] and " (found)" or " (NOT found)")
     end
@@ -1773,6 +1860,7 @@ driver:RegisterEvent("PLAYER_ENTERING_WORLD")
 driver:RegisterEvent("SPELLS_CHANGED")
 driver:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
 driver:RegisterEvent("PLAYER_REGEN_ENABLED")
+driver:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 driver:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 if driver.RegisterUnitEvent then
     driver:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
@@ -1814,6 +1902,8 @@ driver:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         UpdateMinimapButton()
     elseif not db then
         return
+    elseif event == "PLAYER_EQUIPMENT_CHANGED" then
+        gearAt = 0
     elseif event == "SPELL_UPDATE_COOLDOWN" then
         Guard(UpdateGCDFlags)
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
