@@ -1729,11 +1729,63 @@ end
 ------------------------------------------------------------------------
 local mm
 
+-- Which quadrants of the minimap are round, per the GetMinimapShape convention that minimap
+-- addons follow (https://warcraft.wiki.gg/wiki/GetMinimapShape). Order: bottom-right,
+-- bottom-left, top-right, top-left. true = round, false = square corner.
+local MM_SHAPES = {
+    ["ROUND"] = {true, true, true, true},
+    ["SQUARE"] = {false, false, false, false},
+    ["CORNER-TOPLEFT"] = {false, false, false, true},
+    ["CORNER-TOPRIGHT"] = {false, false, true, false},
+    ["CORNER-BOTTOMLEFT"] = {false, true, false, false},
+    ["CORNER-BOTTOMRIGHT"] = {true, false, false, false},
+    ["SIDE-LEFT"] = {false, true, false, true},
+    ["SIDE-RIGHT"] = {true, false, true, false},
+    ["SIDE-TOP"] = {false, false, true, true},
+    ["SIDE-BOTTOM"] = {true, true, false, false},
+    ["TRICORNER-TOPLEFT"] = {false, true, true, true},
+    ["TRICORNER-TOPRIGHT"] = {true, false, true, true},
+    ["TRICORNER-BOTTOMLEFT"] = {true, true, false, true},
+    ["TRICORNER-BOTTOMRIGHT"] = {true, true, true, false},
+}
+
+-- Shape to follow: the saved override ("round" or "square"), else whatever the minimap addon
+-- reports through GetMinimapShape, else round.
+local function MinimapShape()
+    local mode = db and db.minimapShape
+    if mode == "square" then return "SQUARE" end
+    if mode == "round" then return "ROUND" end
+    local fn = _G.GetMinimapShape
+    if type(fn) == "function" then
+        local ok, name = pcall(fn)
+        if ok and type(name) == "string" and MM_SHAPES[name:upper()] then return name:upper() end
+    end
+    return "ROUND"
+end
+
+-- Offset from the minimap centre for an angle, following the shape (pure).
+local function ShapedOffset(angle, halfW, halfH, shapeName)
+    local x, y = math.cos(angle), math.sin(angle)
+    local q = 1
+    if x < 0 then q = q + 1 end
+    if y > 0 then q = q + 2 end
+    local quads = MM_SHAPES[shapeName or "ROUND"] or MM_SHAPES.ROUND
+    if quads[q] then return x * halfW, y * halfH end
+    -- square corner: ride the box edge instead of the circle
+    local dw = math.sqrt(2 * halfW * halfW) - 10
+    local dh = math.sqrt(2 * halfH * halfH) - 10
+    return math.max(-halfW, math.min(x * dw, halfW)), math.max(-halfH, math.min(y * dh, halfH))
+end
+
 local function PositionMinimapButton()
-    local angle = math.rad(db.minimapAngle or 200)
-    local radius = (Minimap:GetWidth() / 2) + 5
+    if not mm then return end
+    local w = Minimap:GetWidth()
+    if type(w) ~= "number" then w = 140 end
+    local h = Minimap.GetHeight and Minimap:GetHeight()
+    if type(h) ~= "number" then h = w end
+    local x, y = ShapedOffset(math.rad(db.minimapAngle or 200), w / 2 + 5, h / 2 + 5, MinimapShape())
     mm:ClearAllPoints()
-    mm:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * radius, math.sin(angle) * radius)
+    mm:SetPoint("CENTER", Minimap, "CENTER", x, y)
 end
 
 local function BuildMinimapButton()
@@ -1782,6 +1834,13 @@ local function BuildMinimapButton()
 
     PositionMinimapButton()
 end
+
+-- A minimap addon can set its shape or size after this addon loads, so place the button again
+-- once everything has loaded.
+local mmFix = CreateFrame("Frame")
+mmFix:RegisterEvent("PLAYER_LOGIN")
+mmFix:RegisterEvent("PLAYER_ENTERING_WORLD")
+mmFix:SetScript("OnEvent", function() if db then PositionMinimapButton() end end)
 
 UpdateMinimapButton = function()
     if not mm then return end
@@ -1953,9 +2012,25 @@ SlashCmdList["SPELLCDTRACKER"] = function(msg)
         db.buff = CopyTable(defaults.buff); db.pbuff = CopyTable(defaults.pbuff)
         if buffFrame then ApplyPosition(buffFrame, BUFF_KEY) end
         print("Spell Cooldown Tracker: positions reset")
+    elseif cmd == "minimap" then
+        local a = rest:lower()
+        if a == "square" or a == "round" then
+            db.minimapShape = a
+        elseif a == "auto" then
+            db.minimapShape = nil
+        elseif a == "on" or a == "show" then
+            db.minimapHide = false
+        elseif a == "off" or a == "hide" then
+            db.minimapHide = true
+        else
+            print("Spell Cooldown Tracker: /scdt minimap on | off | square | round | auto (auto follows your minimap addon)")
+            return
+        end
+        UpdateMinimapButton(); PositionMinimapButton()
+        print("Spell Cooldown Tracker: minimap button " .. (db.minimapHide and "hidden" or "shown") .. ", shape " .. (db.minimapShape or "auto"))
     elseif cmd == "debug" then
         Debug(rest)
     else
-        print("Spell Cooldown Tracker: /scdt (options) | spells | edit | swing | size <n> | ignore <spell> | unignore <spell> | reset | debug [spell]")
+        print("Spell Cooldown Tracker: /scdt (options) | spells | edit | swing | size <n> | ignore <spell> | unignore <spell> | minimap [on|off|square|round|auto] | reset | debug [spell]")
     end
 end
