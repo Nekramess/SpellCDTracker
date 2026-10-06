@@ -7,10 +7,10 @@ Every release zip is named **`<Addon>-v<Version>-forever.zip`**, nothing else:
 | Part | Value for this addon | Where it comes from |
 |---|---|---|
 | `<Addon>` | `SpellCDTracker` (no spaces, same as the folder and the `.toc` name) | `package-as` in `.pkgmeta`, else the `.toc` file name |
-| `v<Version>` | `v0.12.1` | the `## Version:` line in `SpellCDTracker.toc` |
+| `v<Version>` | `v0.12.2` | the `## Version:` line in `SpellCDTracker.toc` |
 | `-forever` | always | marks the Forever build, like other Forever addons on CurseForge |
 
-Example: `SpellCDTracker-v0.12.1-forever.zip`
+Example: `SpellCDTracker-v0.12.2-forever.zip`
 
 Rules:
 - **Build the zip with `tools/package.sh`** (or the "Package" GitHub Action, which calls it). Never zip by hand and never rename the file. Both the script and the action already use this pattern.
@@ -21,7 +21,7 @@ Rules:
 - The internal name does not change when the display name does.
 
 ## Release steps
-1. Branch, make the change, bump `## Version:` in `SpellCDTracker.toc`.
+1. Branch, make the change, bump `## Version:` in `SpellCDTracker.toc`. Run `python3 tests/run_all.py` (needs `pip install lupa`; simulated client only; the `Tests` GitHub Action runs it on every PR).
 2. Run `bash tools/package.sh`; check the printed name matches the standard above.
 3. Open a PR; Anthony merges. Never commit to `main`.
 4. Upload the zip from `dist/` as built (Release type unless Anthony says otherwise). Game version: 1.60.1 (Forever).
