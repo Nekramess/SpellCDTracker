@@ -969,6 +969,68 @@ local function ReadTotems()
     end
 end
 
+
+------------------------------------------------------------------------
+-- gear check: warn when the equipped weapons don't fit the class
+--   Paladin / Warrior / Shaman / Rogue: a one-hander (or an empty main hand) needs something in the
+--   off hand (shield, weapon or held item); a two-hander is fine. Hunter: needs a ranged weapon.
+--   This is a rule of thumb, not spec detection, and can be switched off per class/spec.
+------------------------------------------------------------------------
+local GEAR_RULES = {
+    PALADIN = { offhand = true },
+    WARRIOR = { offhand = true },
+    SHAMAN  = { offhand = true },
+    ROGUE   = { offhand = true },
+    HUNTER  = { ranged = true },
+}
+local gearRule = GEAR_RULES[playerClass]
+local GEAR_ICONS = {
+    main    = "Interface\\PaperDoll\\UI-PaperDoll-Slot-MainHand",
+    offhand = "Interface\\PaperDoll\\UI-PaperDoll-Slot-SecondaryHand",
+    ranged  = "Interface\\PaperDoll\\UI-PaperDoll-Slot-Ranged",
+}
+local TWO_HAND = { INVTYPE_2HWEAPON = true }
+local RANGED_LOC = { INVTYPE_RANGED = true, INVTYPE_RANGEDRIGHT = true, INVTYPE_THROWN = true }
+local OFFHAND_OK = { INVTYPE_SHIELD = true, INVTYPE_WEAPON = true, INVTYPE_WEAPONOFFHAND = true, INVTYPE_HOLDABLE = true }
+
+local gearWarn = {}        -- list of keys from GEAR_ICONS that are a problem right now
+local gearAt = 0           -- last time we checked (0 = check on the next tick)
+local gearInfo = ""        -- what we saw, for /scdt debug
+
+local function SlotLoc(slot)
+    if not GetInventoryItemID then return nil end
+    local ok, id = pcall(GetInventoryItemID, "player", slot)
+    if not ok or issecret(id) or not id then return nil, nil end
+    local info = C_Item and C_Item.GetItemInfoInstant or GetItemInfoInstant
+    if not info then return nil, id end
+    local ok2, _, _, _, loc = pcall(info, id)
+    if ok2 and type(loc) == "string" and not issecret(loc) and loc ~= "" then return loc, id end
+    return nil, id
+end
+
+local function CheckGear()
+    gearWarn = {}
+    if not gearRule or not GetInventoryItemID then gearInfo = "equipment API missing"; return end
+    local main, mainId = SlotLoc(16)
+    local off, offId = SlotLoc(17)
+    local rng, rngId = SlotLoc(18)
+    gearInfo = string.format("main=%s(%s) off=%s(%s) ranged=%s(%s)", tostring(main), tostring(mainId),
+        tostring(off), tostring(offId), tostring(rng), tostring(rngId))
+    if gearRule.ranged then
+        -- a ranged weapon can sit in the ranged slot or (in some clients) the main hand
+        if not (RANGED_LOC[rng or ""] or RANGED_LOC[main or ""] or (rngId and not rng) or (mainId and not main)) then
+            gearWarn[#gearWarn + 1] = "ranged"
+        end
+    elseif gearRule.offhand then
+        if not mainId then
+            gearWarn[#gearWarn + 1] = "main"
+        elseif main and not TWO_HAND[main] and not RANGED_LOC[main] then
+            -- one-hander: wants an off-hand item (unknown item type with an id present counts as filled)
+            if not offId then gearWarn[#gearWarn + 1] = "offhand" end
+        end
+    end
+end
+
 local function BuildBuffs()
     buffFrame = CreateFrame("Frame", "SpellCDTrackerBuffFrame", UIParent)
     buffFrame.icons = {}
@@ -1021,6 +1083,18 @@ local function UpdateBuffs()
             if warnBelow and rem <= warnBelow then SetBorder(ic, 1, 0.2, 0.2) else SetBorder(ic, 0, 0, 0) end
         else
             ic.cd:Clear(); ic.text:SetText(""); SetBorder(ic, 0, 0, 0)
+        end
+    end
+
+    -- gear warnings come first: a missing off hand / ranged weapon is something to fix before combat
+    if gearRule and (prof.gear ~= false) then
+        if GetTime() - gearAt >= 1 then
+            gearAt = GetTime()
+            Guard(CheckGear)
+        end
+        for _, key in ipairs(gearWarn) do
+            local ic = slot_()
+            if ic then ShowMissing(ic, GEAR_ICONS[key], "") end
         end
     end
 
@@ -1275,6 +1349,10 @@ local function RefreshSpells()
 
     -- Paladin indicator toggles belong to the Paladin class only
     for _, cb in ipairs(win.toggles) do cb:SetShown(selClass == "PALADIN") end
+    local hasGear = GEAR_RULES[selClass] ~= nil
+    win.gearToggle:SetShown(hasGear)
+    win.gearToggle:ClearAllPoints()
+    win.gearToggle:SetPoint("TOPLEFT", win, "TOPLEFT", selClass == "PALADIN" and 372 or 20, -158)
 
     spellList = ListSpells(selClass)
     local maxOff = math.max(0, #spellList - SPELL_ROWS)
@@ -1417,6 +1495,12 @@ local function BuildSpells()
             function(v) EditProf()[key] = v; RefreshSpells() end,
             -158, spellsRefreshers, it[3])
     end
+
+    -- gear warnings toggle (classes with a weapon rule); sits at the right on Paladin, at the left otherwise
+    win.gearToggle = MakeCheck(win, "Gear warning",
+        function() return ViewProf().gear ~= false end,
+        function(v) EditProf().gear = v; RefreshSpells() end,
+        -158, spellsRefreshers, 20)
 
     -- track all / none, spec note, reset
     local all = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
@@ -1645,11 +1729,63 @@ end
 ------------------------------------------------------------------------
 local mm
 
+-- Which quadrants of the minimap are round, per the GetMinimapShape convention that minimap
+-- addons follow (https://warcraft.wiki.gg/wiki/GetMinimapShape). Order: bottom-right,
+-- bottom-left, top-right, top-left. true = round, false = square corner.
+local MM_SHAPES = {
+    ["ROUND"] = {true, true, true, true},
+    ["SQUARE"] = {false, false, false, false},
+    ["CORNER-TOPLEFT"] = {false, false, false, true},
+    ["CORNER-TOPRIGHT"] = {false, false, true, false},
+    ["CORNER-BOTTOMLEFT"] = {false, true, false, false},
+    ["CORNER-BOTTOMRIGHT"] = {true, false, false, false},
+    ["SIDE-LEFT"] = {false, true, false, true},
+    ["SIDE-RIGHT"] = {true, false, true, false},
+    ["SIDE-TOP"] = {false, false, true, true},
+    ["SIDE-BOTTOM"] = {true, true, false, false},
+    ["TRICORNER-TOPLEFT"] = {false, true, true, true},
+    ["TRICORNER-TOPRIGHT"] = {true, false, true, true},
+    ["TRICORNER-BOTTOMLEFT"] = {true, true, false, true},
+    ["TRICORNER-BOTTOMRIGHT"] = {true, true, true, false},
+}
+
+-- Shape to follow: the saved override ("round" or "square"), else whatever the minimap addon
+-- reports through GetMinimapShape, else round.
+local function MinimapShape()
+    local mode = db and db.minimapShape
+    if mode == "square" then return "SQUARE" end
+    if mode == "round" then return "ROUND" end
+    local fn = _G.GetMinimapShape
+    if type(fn) == "function" then
+        local ok, name = pcall(fn)
+        if ok and type(name) == "string" and MM_SHAPES[name:upper()] then return name:upper() end
+    end
+    return "ROUND"
+end
+
+-- Offset from the minimap centre for an angle, following the shape (pure).
+local function ShapedOffset(angle, halfW, halfH, shapeName)
+    local x, y = math.cos(angle), math.sin(angle)
+    local q = 1
+    if x < 0 then q = q + 1 end
+    if y > 0 then q = q + 2 end
+    local quads = MM_SHAPES[shapeName or "ROUND"] or MM_SHAPES.ROUND
+    if quads[q] then return x * halfW, y * halfH end
+    -- square corner: ride the box edge instead of the circle
+    local dw = math.sqrt(2 * halfW * halfW) - 10
+    local dh = math.sqrt(2 * halfH * halfH) - 10
+    return math.max(-halfW, math.min(x * dw, halfW)), math.max(-halfH, math.min(y * dh, halfH))
+end
+
 local function PositionMinimapButton()
-    local angle = math.rad(db.minimapAngle or 200)
-    local radius = (Minimap:GetWidth() / 2) + 5
+    if not mm then return end
+    local w = Minimap:GetWidth()
+    if type(w) ~= "number" then w = 140 end
+    local h = Minimap.GetHeight and Minimap:GetHeight()
+    if type(h) ~= "number" then h = w end
+    local x, y = ShapedOffset(math.rad(db.minimapAngle or 200), w / 2 + 5, h / 2 + 5, MinimapShape())
     mm:ClearAllPoints()
-    mm:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * radius, math.sin(angle) * radius)
+    mm:SetPoint("CENTER", Minimap, "CENTER", x, y)
 end
 
 local function BuildMinimapButton()
@@ -1699,6 +1835,13 @@ local function BuildMinimapButton()
     PositionMinimapButton()
 end
 
+-- A minimap addon can set its shape or size after this addon loads, so place the button again
+-- once everything has loaded.
+local mmFix = CreateFrame("Frame")
+mmFix:RegisterEvent("PLAYER_LOGIN")
+mmFix:RegisterEvent("PLAYER_ENTERING_WORLD")
+mmFix:SetScript("OnEvent", function() if db then PositionMinimapButton() end end)
+
 UpdateMinimapButton = function()
     if not mm then return end
     if db.minimapHide then mm:Hide() else mm:Show() end
@@ -1725,6 +1868,9 @@ local function Debug(arg)
         print("  buffs: " .. table.concat(parts, ", ") .. (hasImbues and (" | imbues main/off: "
             .. tostring(imbueState.main and true or false) .. "/" .. tostring(imbueState.off and true or false)
             .. " | source: " .. tostring(imbueApi) .. " | raw: " .. tostring(imbueRaw)) or ""))
+    end
+    if gearRule then
+        print("  gear: " .. (#gearWarn > 0 and ("WARNING " .. table.concat(gearWarn, ", ")) or "ok") .. " | " .. gearInfo)
     end
     for _, n in ipairs(SWING_FRAMES) do
         swingFound[#swingFound + 1] = n .. (_G[n] and " (found)" or " (NOT found)")
@@ -1773,6 +1919,7 @@ driver:RegisterEvent("PLAYER_ENTERING_WORLD")
 driver:RegisterEvent("SPELLS_CHANGED")
 driver:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
 driver:RegisterEvent("PLAYER_REGEN_ENABLED")
+driver:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 driver:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 if driver.RegisterUnitEvent then
     driver:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
@@ -1814,6 +1961,8 @@ driver:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         UpdateMinimapButton()
     elseif not db then
         return
+    elseif event == "PLAYER_EQUIPMENT_CHANGED" then
+        gearAt = 0
     elseif event == "SPELL_UPDATE_COOLDOWN" then
         Guard(UpdateGCDFlags)
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
@@ -1863,9 +2012,25 @@ SlashCmdList["SPELLCDTRACKER"] = function(msg)
         db.buff = CopyTable(defaults.buff); db.pbuff = CopyTable(defaults.pbuff)
         if buffFrame then ApplyPosition(buffFrame, BUFF_KEY) end
         print("Spell Cooldown Tracker: positions reset")
+    elseif cmd == "minimap" then
+        local a = rest:lower()
+        if a == "square" or a == "round" then
+            db.minimapShape = a
+        elseif a == "auto" then
+            db.minimapShape = nil
+        elseif a == "on" or a == "show" then
+            db.minimapHide = false
+        elseif a == "off" or a == "hide" then
+            db.minimapHide = true
+        else
+            print("Spell Cooldown Tracker: /scdt minimap on | off | square | round | auto (auto follows your minimap addon)")
+            return
+        end
+        UpdateMinimapButton(); PositionMinimapButton()
+        print("Spell Cooldown Tracker: minimap button " .. (db.minimapHide and "hidden" or "shown") .. ", shape " .. (db.minimapShape or "auto"))
     elseif cmd == "debug" then
         Debug(rest)
     else
-        print("Spell Cooldown Tracker: /scdt (options) | spells | edit | swing | size <n> | ignore <spell> | unignore <spell> | reset | debug [spell]")
+        print("Spell Cooldown Tracker: /scdt (options) | spells | edit | swing | size <n> | ignore <spell> | unignore <spell> | minimap [on|off|square|round|auto] | reset | debug [spell]")
     end
 end
