@@ -1,0 +1,24 @@
+name: Tests
+# Simulated-client tests (Lua 5.1 via lupa). They check addon logic, not the live Forever client.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install lupa
+      - run: python3 -I tests/run_all.py
+      - run: python3 -I tests/mutation_check.py
+      - name: Package builds with the standard name
+        run: |
+          ver=$(grep -m1 '^## Version:' SpellCDTracker.toc | sed 's/^## Version: *//' | tr -d '\r')
+          path=$(bash tools/package.sh | tail -1)
+          test -f "$path"
+          test "$(basename "$path")" = "SpellCDTracker-v${ver}-forever.zip"

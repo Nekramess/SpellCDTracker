@@ -115,16 +115,27 @@ local function ClassColor(key)
 end
 
 -- spec index (1-3) if the client reports one, otherwise nil
+-- Forever documents C_SpecializationInfo.GetSpecialization; the global is only a deprecated shim there
+-- (Blizzard_DeprecatedSpecialization, gated by the loadDeprecationFallbacks CVar), so try the namespace first.
+local function GetSpecializationFn()
+    return (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
+end
+local function GetSpecializationInfoFn()
+    return (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
+end
+
 local function DetectSpecIndex()
-    if GetSpecialization then
-        local ok, idx = pcall(GetSpecialization)
+    local fn = GetSpecializationFn()
+    if fn then
+        local ok, idx = pcall(fn)
         if ok and type(idx) == "number" and idx >= 1 and idx <= 3 then return idx end
     end
 end
 
 local function SpecName(class, idx)
-    if class == playerClass and GetSpecializationInfo then
-        local ok, _, name = pcall(GetSpecializationInfo, idx)
+    local infoFn = GetSpecializationInfoFn()
+    if class == playerClass and infoFn then
+        local ok, _, name = pcall(infoFn, idx)
         if ok and type(name) == "string" and name ~= "" then return name end
     end
     local t = SPEC_NAMES[class]
@@ -1122,7 +1133,12 @@ local function UpdateBuffs()
             for _, n in ipairs(imbueCfg.spells) do if known[n] and not fallback then fallback = known[n].icon end end
             local icon = (playerClass == "SHAMAN" and db.lastImbueIcon) or fallback
             local hands = { "main" }
-            if OffhandHasWeapon and OffhandHasWeapon() then hands[2] = "off" end
+            -- Forever only has C_PaperDollInfo.OffhandHasWeapon (no global of that name in its UI source)
+            local offFn = (C_PaperDollInfo and C_PaperDollInfo.OffhandHasWeapon) or OffhandHasWeapon
+            if offFn then
+                local okOff, hasOff = pcall(offFn)
+                if okOff and hasOff then hands[2] = "off" end
+            end
             for _, h in ipairs(hands) do
                 local ic = slot_()
                 if ic then
@@ -1858,7 +1874,7 @@ local function Debug(arg)
     local names = (arg and arg ~= "") and { arg } or { "Judgement", "Judgment", "Holy Strike", "Consecration" }
     local swingFound = {}
     print("  profile: " .. tostring(profileKey) .. " (" .. tostring(profileLabel) .. ")"
-        .. (GetSpecialization and "" or " | client has no GetSpecialization: profiles are per class"))
+        .. (GetSpecializationFn() and "" or " | client has no GetSpecialization: profiles are per class"))
     if buffGroups then
         local parts = {}
         for _, g in ipairs(buffGroups) do
