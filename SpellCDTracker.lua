@@ -608,11 +608,7 @@ local function BuildPaladin()
     palaFrame.blessing = CreateIcon(palaFrame)
     palaFrame.rf = CreateIcon(palaFrame)
     palaFrame.food = CreateIcon(palaFrame)
-    palaFrame.auraIcons = {}
-    for i, name in ipairs(PALADIN_AURAS) do
-        palaFrame.auraIcons[i] = CreateIcon(palaFrame)
-        palaFrame.auraIcons[i].auraName = name
-    end
+    palaFrame.aura = CreateIcon(palaFrame)      -- one icon for all Auras
     palaFrame.warn = palaFrame:CreateFontString(nil, "OVERLAY")
     palaFrame.warn:SetFont(FONT, 14, "OUTLINE")
     palaFrame.warn:SetTextColor(1, 0.2, 0.2)
@@ -772,7 +768,7 @@ local function UpdatePaladin()
         palaFrame.rf:Hide()
     end
 
-    -- optional food buff: always shown while switched on (red when missing), before the Auras
+    -- optional food buff: always shown while switched on (red when missing), before the Aura icon
     if db.trackFood then
         place(palaFrame.food)
         DrawFood(palaFrame.food)
@@ -780,32 +776,37 @@ local function UpdatePaladin()
         palaFrame.food:Hide()
     end
 
-    -- Auras -------------------------------------------------------------
-    local shownAuras = {}
-    for _, ic in ipairs(palaFrame.auraIcons) do
-        if prof.auras ~= false and known[ic.auraName] then shownAuras[#shownAuras + 1] = ic else ic:Hide() end
+    -- Auras: ONE icon. Aura on = the icon of that Aura; none on = dimmed Devotion Aura (else the first Aura
+    -- you know) with the red "missing" border.
+    local defaultAura          -- Devotion Aura is first in PALADIN_AURAS, so it is the default whenever you know it
+    for _, an in ipairs(PALADIN_AURAS) do
+        if known[an] then defaultAura = an break end
     end
+    local showAura = prof.auras ~= false and defaultAura ~= nil
     local anyAura = false
-    for _, ic in ipairs(shownAuras) do
+    if showAura then
+        local ic = palaFrame.aura
         place(ic)
-        ic.icon:SetTexture(known[ic.auraName].icon)
         ic.cd:Clear()
         ic.text:SetText("")
         ic.label:SetText("")
-        if pstate.aura == ic.auraName then
+        local active = pstate.aura
+        if active and known[active] then
             anyAura = true
+            ic.icon:SetTexture(known[active].icon)
             ic.icon:SetDesaturated(false)
             ic:SetAlpha(1)
+            SetBorder(ic, 0, 0, 0)
         else
-            ic.icon:SetDesaturated(true)
-            ic:SetAlpha(0.4)
+            ShowMissing(ic, known[defaultAura].icon, "AURA")
         end
-        SetBorder(ic, 0, 0, 0)
+    else
+        palaFrame.aura:Hide()
     end
 
     palaFrame:SetSize(math.max(idx, 3) * (size + GAP) - GAP, size)
 
-    if #shownAuras > 0 and not anyAura then
+    if showAura and not anyAura then
         local scale = (db.textScale or 100) / 100
         palaFrame.warn:SetFont(FONT, math.max(9, math.floor(size * 0.3 * scale)), "OUTLINE")
         palaFrame.warn:ClearAllPoints()
@@ -1753,7 +1754,7 @@ local function BuildOptions()
     MakeSlider(options, "Text size %", 50, 200, 10,
         function() return db.textScale end, function(v) db.textScale = v; if cdFrame then for _, i in ipairs(cdFrame.icons) do i.styleKey = nil end end
             if palaFrame then palaFrame.seal.styleKey = nil; palaFrame.blessing.styleKey = nil
-                for _, i in ipairs(palaFrame.auraIcons) do i.styleKey = nil end end end, y)
+                palaFrame.aura.styleKey = nil end end, y)
     y = y - 40
     local editBtn = CreateFrame("Button", nil, options, "UIPanelButtonTemplate")
     editBtn:SetSize(232, 24)

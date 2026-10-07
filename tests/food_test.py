@@ -77,10 +77,10 @@ t.check("Well Fed with no timer: shown as active, no countdown", food(c)["desat"
 
 # position: after Righteous Fury, before the Auras; the Auras shift right by one icon only while it is on
 c = pal([WELL_FED])
-rf_x, fd_x, a1_x = x_of(c, f"{PALA}.rf"), x_of(c, f"{PALA}.food"), x_of(c, f"{PALA}.auraIcons[1]")
-t.check("food sits right after Righteous Fury, and the first Aura right after the food", fd_x == rf_x + 44 and a1_x == fd_x + 44, (rf_x, fd_x, a1_x))
+rf_x, fd_x, a1_x = x_of(c, f"{PALA}.rf"), x_of(c, f"{PALA}.food"), x_of(c, f"{PALA}.aura")
+t.check("food sits right after Righteous Fury, and the Aura icon right after the food", fd_x == rf_x + 44 and a1_x == fd_x + 44, (rf_x, fd_x, a1_x))
 c2 = pal([WELL_FED], on=False)
-t.check("food off: the first Aura is where it always was (right after Righteous Fury)", x_of(c2, f"{PALA}.auraIcons[1]") == rf_x + 44, x_of(c2, f"{PALA}.auraIcons[1]"))
+t.check("food off: the Aura icon sits right after Righteous Fury", x_of(c2, f"{PALA}.aura") == rf_x + 44, x_of(c2, f"{PALA}.aura"))
 t.check("the panel is one icon wider with the food icon", c.ev(f"{PALA}._w") == c2.ev(f"{PALA}._w") + 44, (c.ev(f"{PALA}._w"), c2.ev(f"{PALA}._w")))
 
 # the Paladin buff row never carries the food icon (the panel does)
