@@ -2,6 +2,8 @@
 -- 1) Cooldown row: an icon appears only while a spell is on cooldown.
 -- 2) Paladin panel: Seal countdown, Aura on/off indicators, "my Blessing on me" check.
 -- 3) Minimap button + options window (sizes, lock, reset).
+-- 4) Optional food buff icon (off by default): always shown next to the buffs while switched on,
+--    countdown while "Well Fed" is up, dimmed with a red border while it is missing.
 --
 -- Combat note: in Forever, aura reads throw and cooldown numbers are "secret values" while in
 -- combat. Cooldowns are handed to the Cooldown widget as duration objects; the Paladin panel
@@ -17,6 +19,7 @@ local defaults = {
     minimapHide = false,
     readyAlways = false,      -- pinned abilities: show grayed-out when ready in combat only (false) or always (true)
     swingCombatOnly = true,   -- hide Forever's built-in swing timer bars out of combat
+    trackFood = false,        -- optional food buff icon ("Well Fed") next to the buffs; red while it is missing
     cd   = { point = "CENTER", relPoint = "CENTER", x = 0, y = -150 },
     pala = { point = "CENTER", relPoint = "CENTER", x = 0, y = -215 },
     ignore = {},          -- legacy global list; copied into each new class/spec profile
@@ -604,6 +607,7 @@ local function BuildPaladin()
     palaFrame.seal = CreateIcon(palaFrame)
     palaFrame.blessing = CreateIcon(palaFrame)
     palaFrame.rf = CreateIcon(palaFrame)
+    palaFrame.food = CreateIcon(palaFrame)
     palaFrame.auraIcons = {}
     for i, name in ipairs(PALADIN_AURAS) do
         palaFrame.auraIcons[i] = CreateIcon(palaFrame)
@@ -643,6 +647,58 @@ local function ShowMissing(ic, icon, word)
         ic.text:SetText(word)
     end
     ic.label:SetText("")
+end
+
+------------------------------------------------------------------------
+-- optional food buff (db.trackFood, off by default)
+-- Eating in Forever applies an aura named "Well Fed" (Wowhead Forever spell 1248420, 15 min); a separate
+-- "Well Fed XP Boost" aura comes with it and is NOT counted. Same rules as the Seal: aura reads are blocked in
+-- combat, so the last known state is kept and only lapses when its own timer runs out.
+------------------------------------------------------------------------
+local FOOD_AURAS = { ["Well Fed"] = true }
+local FOOD_FALLBACK_ICON = "Interface\\Icons\\INV_Misc_Food_01"   -- until a Well Fed aura has been seen once
+local foodState            -- { name, icon, duration, expires } while the buff is up, else nil
+
+local function RefreshFoodFromAuras()
+    local found
+    for _, a in ipairs(GetPlayerBuffs()) do
+        if a.name and FOOD_AURAS[a.name] then
+            found = { name = a.name, icon = a.icon, duration = a.duration, expires = a.expires }
+            break
+        end
+    end
+    if found and found.icon then db.lastFoodIcon = found.icon end
+    foodState = found
+end
+
+-- once per tick from the main loop (both the Paladin panel and the buff row draw from foodState)
+local function UpdateFood()
+    if AurasLocked() then
+        local a = foodState
+        if a and a.expires and a.expires > 0 and GetTime() > a.expires then foodState = nil end
+    else
+        RefreshFoodFromAuras()
+    end
+end
+
+-- active = icon + countdown; missing = dimmed icon with a red border (the same look as a missing Seal)
+local function DrawFood(ic)
+    local st = foodState
+    ic.icon:SetDesaturated(false)
+    if st then
+        ic.icon:SetTexture(st.icon or db.lastFoodIcon or FOOD_FALLBACK_ICON)
+        ic.label:SetText("")
+        if st.expires and st.expires > 0 then
+            if st.duration and st.duration > 0 then ic.cd:SetCooldown(st.expires - st.duration, st.duration) else ic.cd:Clear() end
+            ic.text:SetText(FormatTime(math.max(st.expires - GetTime(), 0)))
+        else
+            ic.cd:Clear()
+            ic.text:SetText("")
+        end
+        SetBorder(ic, 0, 0, 0)
+    else
+        ShowMissing(ic, db.lastFoodIcon or FOOD_FALLBACK_ICON, "FOOD")
+    end
 end
 
 local function UpdatePaladin()
@@ -714,6 +770,14 @@ local function UpdatePaladin()
         DrawBuff(palaFrame.rf, pstate.rf, "Righteous Fury", "Righteous Fury", db.lastRFIcon, "RF", 60)
     else
         palaFrame.rf:Hide()
+    end
+
+    -- optional food buff: always shown while switched on (red when missing), before the Auras
+    if db.trackFood then
+        place(palaFrame.food)
+        DrawFood(palaFrame.food)
+    else
+        palaFrame.food:Hide()
     end
 
     -- Auras -------------------------------------------------------------
@@ -1162,6 +1226,12 @@ local function UpdateBuffs()
                 if ic then ShowMissing(ic, db.buffIcons.pet or first.icon, "PET") end
             end
         end
+    end
+
+    -- optional food buff (the Paladin panel carries its own): before the totems and the active buffs, so it keeps its place
+    if db.trackFood and not isPaladin then
+        local ic = slot_()
+        if ic then DrawFood(ic) end
     end
 
     -- totems: shown only while they are down
@@ -1646,7 +1716,7 @@ local function UpdateMinimapButton() end   -- replaced below
 local function BuildOptions()
     local tmpl = BackdropTemplateMixin and "BackdropTemplate" or nil
     options = CreateFrame("Frame", "SpellCDTrackerOptions", UIParent, tmpl)
-    options:SetSize(280, isPaladin and 410 or 360)
+    options:SetSize(280, isPaladin and 440 or 390)
     options:SetPoint("CENTER")
     options:SetFrameStrata("DIALOG")
     options:SetMovable(true)
@@ -1701,6 +1771,9 @@ local function BuildOptions()
     y = y - 30
     MakeCheck(options, "Ready icons also out of combat",
         function() return db.readyAlways end, function(v) db.readyAlways = v end, y)
+    y = y - 30
+    MakeCheck(options, "Track food buff (Well Fed)",
+        function() return db.trackFood end, function(v) db.trackFood = v end, y)
     y = y - 30
     MakeCheck(options, "Hide minimap button",
         function() return db.minimapHide end, function(v) db.minimapHide = v; UpdateMinimapButton() end, y)
@@ -1888,6 +1961,8 @@ local function Debug(arg)
     if gearRule then
         print("  gear: " .. (#gearWarn > 0 and ("WARNING " .. table.concat(gearWarn, ", ")) or "ok") .. " | " .. gearInfo)
     end
+    print("  food: tracking " .. (db.trackFood and "ON" or "OFF") .. " | "
+        .. (foodState and ("active: " .. tostring(foodState.name)) or "no Well Fed seen"))
     for _, n in ipairs(SWING_FRAMES) do
         swingFound[#swingFound + 1] = n .. (_G[n] and " (found)" or " (NOT found)")
     end
@@ -1926,6 +2001,7 @@ driver:SetScript("OnUpdate", function(_, dt)
     Guard(RefreshProfile)
     Guard(UpdateCooldowns)
     Guard(UpdateSwingTimer)
+    if db.trackFood then Guard(UpdateFood) else foodState = nil end
     if isPaladin then Guard(UpdatePaladin) end
     if buffFrame then Guard(UpdateBuffs) end
 end)
@@ -2007,6 +2083,20 @@ SlashCmdList["SPELLCDTRACKER"] = function(msg)
     elseif cmd == "swing" then
         db.swingCombatOnly = not db.swingCombatOnly
         print("Spell Cooldown Tracker: swing timer " .. (db.swingCombatOnly and "shows only in combat" or "always visible (untouched)"))
+    elseif cmd == "food" then
+        local a = rest:lower()
+        if a == "on" then
+            db.trackFood = true
+        elseif a == "off" then
+            db.trackFood = false
+        elseif a == "" then
+            db.trackFood = not db.trackFood
+        else
+            print("Spell Cooldown Tracker: /scdt food on | off (shows a Well Fed icon next to your buffs, red while it is missing)")
+            return
+        end
+        for _, r in ipairs(refreshers) do r() end      -- keep the options check box in step if it is open
+        print("Spell Cooldown Tracker: food buff tracking " .. (db.trackFood and "ON (red icon while Well Fed is missing)" or "OFF"))
     elseif cmd == "lock" then
         SetEditMode(false); print("Spell Cooldown Tracker: edit mode OFF")
     elseif cmd == "unlock" then
@@ -2047,6 +2137,6 @@ SlashCmdList["SPELLCDTRACKER"] = function(msg)
     elseif cmd == "debug" then
         Debug(rest)
     else
-        print("Spell Cooldown Tracker: /scdt (options) | spells | edit | swing | size <n> | ignore <spell> | unignore <spell> | minimap [on|off|square|round|auto] | reset | debug [spell]")
+        print("Spell Cooldown Tracker: /scdt (options) | spells | edit | swing | food [on|off] | size <n> | ignore <spell> | unignore <spell> | minimap [on|off|square|round|auto] | reset | debug [spell]")
     end
 end
