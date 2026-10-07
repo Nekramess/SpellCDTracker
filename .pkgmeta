@@ -4,3 +4,4 @@ ignore:
   - docs
   - tools
   - .github
+  - releases

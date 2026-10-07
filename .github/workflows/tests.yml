@@ -22,3 +22,5 @@ jobs:
           path=$(bash tools/package.sh | tail -1)
           test -f "$path"
           test "$(basename "$path")" = "SpellCDTracker-v${ver}-forever.zip"
+      - name: Release zip in releases/ is current
+        run: bash tools/check-release.sh
