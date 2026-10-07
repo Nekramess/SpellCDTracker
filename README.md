@@ -6,4 +6,4 @@ Icons-only cooldown, buff, totem and pet/imbue tracker for World of Warcraft: Fo
 Copy the `SpellCDTracker` folder into `Interface/AddOns/`, then restart the game or `/reload`. The folder keeps the name `SpellCDTracker`; only the name shown in game changed.
 
 ## Commands
-- `/scdt` options, `/scdt spells` Tracked spells, `/scdt edit` move frames, `/scdt minimap on|off|square|round|auto` minimap button (follows square minimaps by itself), `/scdt debug` diagnostics
+- `/scdt` options, `/scdt spells` Tracked spells, `/scdt edit` move frames, `/scdt food on|off` optional food buff icon ("Well Fed", off by default; shown next to your buffs and red while missing), `/scdt minimap on|off|square|round|auto` minimap button (follows square minimaps by itself), `/scdt debug` diagnostics

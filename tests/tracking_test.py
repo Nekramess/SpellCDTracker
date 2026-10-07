@@ -20,7 +20,13 @@ s, b, rf = pic(c, "seal"), pic(c, "blessing"), pic(c, "rf")
 t.check("Seal active: its icon, a countdown, normal border", s["tex"] == 7001 and s["text"] != "" and s["border"] == BLACK and s["desat"] is False, s)
 t.check("Blessing (mine) active with countdown", b["tex"] == 7002 and b["text"] != "", b)
 t.check("Righteous Fury active (known + active)", rf["tex"] == 7003 and rf["text"] != "" and rf["border"] == BLACK, rf)
-t.check("active Aura full colour, the other known Aura dimmed", c.icon_at("SpellCDTrackerPalaFrame.auraIcons[1]")["alpha"] == 1 and c.icon_at("SpellCDTrackerPalaFrame.auraIcons[2]")["alpha"] == 0.4)
+au = c.icon_at("SpellCDTrackerPalaFrame.aura")
+t.check("Auras are ONE icon: with Devotion Aura on it shows Devotion's icon, full colour, normal border",
+        au["shown"] and au["tex"] == c.spell_icon("Devotion Aura") and au["alpha"] == 1 and au["desat"] is False and au["border"] == BLACK, au)
+c2 = pal([("Retribution Aura", None, None, "player")])
+au = c2.icon_at("SpellCDTrackerPalaFrame.aura")
+t.check("with Retribution Aura on, the same icon shows Retribution's icon (always the active Aura)",
+        au["tex"] == c2.spell_icon("Retribution Aura") and au["desat"] is False and au["border"] == BLACK, au)
 t.check("no 'NO AURA' warning while an Aura is up", c.ev("SpellCDTrackerPalaFrame.warn._text") == "")
 db = c.db()
 t.check("last seen Seal/Blessing/RF icons and durations are saved for combat",
@@ -38,6 +44,12 @@ t.check("Seal missing: dimmed icon (a Seal you know) with red border, no countdo
 t.check("Blessing missing: same", b["desat"] is True and b["border"] == RED_MISSING, b)
 t.check("Righteous Fury missing (known): shown as missing", rf["shown"] and rf["desat"] is True and rf["border"] == RED_MISSING, rf)
 t.check("no Aura active: 'NO AURA' warning", c.ev("SpellCDTrackerPalaFrame.warn._text") == "NO AURA")
+au = c.icon_at("SpellCDTrackerPalaFrame.aura")
+t.check("no Aura active: the one Aura icon is Devotion Aura (the default), dimmed, with the red 'missing' border",
+        au["shown"] and au["tex"] == c.spell_icon("Devotion Aura") and au["desat"] is True and au["border"] == RED_MISSING, au)
+c3 = Client("PALADIN").boot(["Judgement", "Seal of Righteousness", "Retribution Aura"]); c3.tick(0.2)
+t.check("Devotion Aura not known: the default icon is the first Aura you do know",
+        c3.icon_at("SpellCDTrackerPalaFrame.aura")["tex"] == c3.spell_icon("Retribution Aura") and c3.icon_at("SpellCDTrackerPalaFrame.aura")["border"] == RED_MISSING)
 
 c = pal([("Blessing of Might", 280, 300, "party1"), ("Devotion Aura", None, None, "party1")])
 t.check("someone else's Blessing does not count as mine", pic(c, "blessing")["desat"] is True)
@@ -56,7 +68,7 @@ for label, key, frame in [("Seal", "seal", "seal"), ("Blessing", "blessing", "bl
     c.click_check(label, False); c.tick(0.2)
     t.check(f"profile toggle '{label}' off hides that icon and saves {key}=false", pic(c, frame)["shown"] is False and c.db()["profiles"]["PALADIN"][key] is False)
 c.click_check("Auras", False); c.tick(0.2)
-t.check("profile toggle 'Auras' off hides the Aura icons and the warning", c.icon_at("SpellCDTrackerPalaFrame.auraIcons[1]")["shown"] is False and c.ev("SpellCDTrackerPalaFrame.warn._text") == "")
+t.check("profile toggle 'Auras' off hides the Aura icon and the warning", c.icon_at("SpellCDTrackerPalaFrame.aura")["shown"] is False and c.ev("SpellCDTrackerPalaFrame.warn._text") == "")
 
 # Paladin buff row (pbuff): shows only while active
 c = Client("PALADIN").boot(["Holy Shield", "Divine Shield"]); c.set_equip(main="INVTYPE_2HWEAPON")

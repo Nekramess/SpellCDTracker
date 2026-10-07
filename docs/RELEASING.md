@@ -7,10 +7,10 @@ Every release zip is named **`<Addon>-v<Version>-forever.zip`**, nothing else:
 | Part | Value for this addon | Where it comes from |
 |---|---|---|
 | `<Addon>` | `SpellCDTracker` (no spaces, same as the folder and the `.toc` name) | `package-as` in `.pkgmeta`, else the `.toc` file name |
-| `v<Version>` | `v0.12.2` | the `## Version:` line in `SpellCDTracker.toc` |
+| `v<Version>` | `v0.13.0` | the `## Version:` line in `SpellCDTracker.toc` |
 | `-forever` | always | marks the Forever build, like other Forever addons on CurseForge |
 
-Example: `SpellCDTracker-v0.12.2-forever.zip`
+Example: `SpellCDTracker-v0.13.0-forever.zip`
 
 Rules:
 - **Build the zip with `tools/package.sh`** (or the "Package" GitHub Action, which calls it). Never zip by hand and never rename the file. Both the script and the action already use this pattern.
