@@ -368,12 +368,21 @@ end
 --        or "known",  start, duration   (numbers we may read and do math on)
 --        or "secret"                    (active, but numbers are hidden; use duration object)
 ------------------------------------------------------------------------
+-- A spell that is only in "start recovery" (the global cooldown, or the pause after a wand shot) has
+-- timeUntilEndOfStartRecovery set and no cooldown category (Forever API docs, SpellCooldownInfo).
+-- Seen live 15 Oct 2026 (Warlock, wand, Shadow Bolt in combat): isActive true, isOnGCD nil,
+-- startRecovery secret (= set), category nil. Testing a secret value against nil does not error.
+local function InStartRecovery(info)
+    return info.timeUntilEndOfStartRecovery ~= nil and info.activeCategory == nil
+end
+
 local function ReadCooldown(s)
-    local start, dur, active
+    local start, dur, active, recovery
     if C_Spell and C_Spell.GetSpellCooldown then
         local info = C_Spell.GetSpellCooldown(s.name) or C_Spell.GetSpellCooldown(s.id)
         if not info then s.cEnd = nil; return "none" end
         start, dur, active = info.startTime, info.duration, info.isActive
+        recovery = InStartRecovery(info)
     elseif GetSpellCooldown then
         start, dur = GetSpellCooldown(s.name)
     else
@@ -394,7 +403,7 @@ local function ReadCooldown(s)
     if s.cEnd and s.cEnd > now and active ~= false then
         return "known", s.cStart, s.cEnd - s.cStart
     end
-    if active and not s.onGCD then return "secret" end
+    if active and not s.onGCD and not recovery then return "secret" end
     return "none"
 end
 

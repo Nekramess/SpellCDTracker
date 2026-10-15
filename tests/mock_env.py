@@ -204,6 +204,9 @@ function C_Spell.GetSpellCooldown(x)
   if not s then return nil end
   local active = (s.cdDur or 0) > 0 and (s.cdStart + s.cdDur) > W.now
   local info = { startTime = s.cdStart or 0, duration = s.cdDur or 0, isEnabled = true, isActive = active, modRate = 1, isOnGCD = s.gcd and true or false }
+  -- Forever's SpellCooldownInfo: spells in start recovery (GCD / wand shot) have timeUntilEndOfStartRecovery set and no category
+  if s.recovery then info.timeUntilEndOfStartRecovery = (W.combat and W.secretCd) and Secret() or 0.9; info.isOnGCD = nil end
+  if s.cat then info.activeCategory = s.cat end
   if W.combat and W.secretCd then info.startTime, info.duration = Secret(), Secret() end
   return info
 end
