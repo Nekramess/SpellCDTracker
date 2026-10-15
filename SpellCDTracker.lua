@@ -1981,6 +1981,22 @@ local function Debug(arg)
                 found.name, tostring(found.id), kind,
                 st and string.format("%.1f", st) or "-", d and string.format("%.1f", d) or "-",
                 tostring((currentProf and currentProf.ignore[found.name:lower()]) and true or false)))
+            -- what the game itself reports right now (use it in combat, while shooting a wand)
+            local function fv(v) if v == nil then return "nil" end if issecret(v) then return "secret" end return tostring(v) end
+            local ok, info = pcall(C_Spell and C_Spell.GetSpellCooldown or function() end, found.id)
+            if ok and info then
+                local zero = "n/a"
+                if C_Spell.GetSpellCooldownDuration then
+                    local ok2, obj = pcall(C_Spell.GetSpellCooldownDuration, found.id, true)
+                    if ok2 and obj and obj.IsZero then
+                        local ok3, z = pcall(obj.IsZero, obj)
+                        zero = ok3 and fv(z) or "error"
+                    elseif ok2 then zero = "no object" end
+                end
+                print(string.format("    raw: isActive %s, isOnGCD %s, cached onGCD %s, isEnabled %s, category %s, startRecovery %s, duration %s | cooldown ignoring GCD is zero: %s",
+                    fv(info.isActive), fv(info.isOnGCD), tostring(found.onGCD), fv(info.isEnabled),
+                    fv(info.activeCategory), fv(info.timeUntilEndOfStartRecovery), fv(info.duration), zero))
+            end
         end
     end
 end
