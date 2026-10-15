@@ -38,6 +38,8 @@ MUTATIONS = [
      "swingCombatOnly = true,   --", "swingCombatOnly = false,   --", ["savedvars_test.py", "slash_test.py"]),
     ("wand: start-recovery spells shown as cooldowns in combat again",
      'if active and not s.onGCD and not recovery then return "secret" end', 'if active and not s.onGCD then return "secret" end', ["wand_test.py"]),
+    ("wand: Shoot is tracked like any other spell",
+     'if not ignore[lname] and not NEVER_TRACK[lname] then', 'if not ignore[lname] then', ["wand_test.py"]),
     ("wand: any spell with start recovery ignored, even with a real cooldown category",
      "return info.timeUntilEndOfStartRecovery ~= nil and info.activeCategory == nil", "return info.timeUntilEndOfStartRecovery ~= nil", ["wand_test.py"]),
     ("food: tracking on by default",

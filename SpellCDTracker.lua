@@ -42,6 +42,9 @@ local isPaladin = (playerClass == "PALADIN")
 
 local GAP = 4
 local MIN_CD = 2          -- ignore anything at or under the global cooldown
+-- Auto-repeat attacks whose "cooldown" is just the weapon's attack timer: never shown (Anthony, 15 Oct 2026: no wand cooldown icon).
+-- "Shoot" is the wand spell in Classic (Warcraft Wiki); that it has the same name in Forever is not confirmed.
+local NEVER_TRACK = { ["shoot"] = true }
 local FONT = "Fonts\\FRIZQT__.TTF"
 
 local issecret = issecretvalue or function() return false end
@@ -438,7 +441,7 @@ local function UpdateCooldowns()
     local showReady = InCombat() or db.readyAlways
     for name, s in pairs(known) do
         local lname = name:lower()
-        if not ignore[lname] then
+        if not ignore[lname] and not NEVER_TRACK[lname] then
             local pinned = pins[lname] and true or false
             local kind, start, dur = ReadCooldown(s)
             if kind == "known" then

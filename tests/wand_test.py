@@ -52,4 +52,19 @@ t.check("out of combat: wand pause (1.8 s) ignored", len(c3.icons()) == 0, c3.ic
 c3.cooldown("Fear", 20, 30); c3.tick(0.2, 2)
 t.check("out of combat: a real cooldown shows", len(c3.icons()) == 1, c3.icons())
 
+# the wand spell itself: its own cooldown is the wand's attack timer and is never shown
+c4 = Client("WARLOCK").boot(["Shadow Bolt", "Shoot", "Fear"])
+c4.combat(True); c4.tick(0.2, 2)
+c4.lua.globals().NAME = "Shoot"
+c4.exe("local s = W.spells[NAME]; s.cdStart = W.now; s.cdDur = 1.8; s.gcd = false; s.cat = 133")
+c4.tick(0.2, 3)
+t.check("combat: the wand spell (Shoot) with its own attack-timer cooldown shows no icon", len(c4.icons()) == 0, c4.icons())
+c4.cooldown("Fear", 20, 30); c4.tick(0.2, 3)
+t.check("... other cooldowns still show next to it", len(c4.icons()) == 1 and c4.icons()[0]["tex"] == c4.spell_icon("Fear"), c4.icons())
+c4.combat(False); c4.tick(0.2, 2)
+c4.lua.globals().NAME = "Shoot"
+c4.exe("local s = W.spells[NAME]; s.cdStart = W.now; s.cdDur = 3.0; s.gcd = false")
+c4.tick(0.2, 2)
+t.check("out of combat: a slow wand (3 s timer, readable) shows no icon either", all(i["tex"] != c4.spell_icon("Shoot") for i in c4.icons()), c4.icons())
+
 t.finish()
