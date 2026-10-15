@@ -108,7 +108,10 @@ c.slash("frobnicate")
 out = " ".join(c.new_output())
 t.check("unknown subcommand prints the full usage", all(w in out for w in ["spells", "edit", "swing", "size", "ignore", "unignore", "minimap", "reset", "debug"]), out)
 c.slash("debug Judgement")
-t.check("/scdt debug <spell> reports that spell", any("Judgement: id" in p for p in c.new_output()))
+out = c.new_output()
+t.check("/scdt debug <spell> reports that spell", any("Judgement: id" in p for p in out))
+t.check("/scdt debug <spell> also prints the raw game cooldown fields (GCD, category, start recovery)",
+        any("raw: isActive" in p and "isOnGCD" in p and "startRecovery" in p for p in out), out)
 c.slash("debug Nonexistent")
 t.check("/scdt debug on an unknown spell says not found", any("Nonexistent: not found in spell list" in p for p in c.new_output()))
 

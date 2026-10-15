@@ -42,6 +42,9 @@ local isPaladin = (playerClass == "PALADIN")
 
 local GAP = 4
 local MIN_CD = 2          -- ignore anything at or under the global cooldown
+-- Auto-repeat attacks whose "cooldown" is just the weapon's attack timer: never shown (Anthony, 15 Oct 2026: no wand cooldown icon).
+-- "Shoot" is the wand spell in Classic (Warcraft Wiki); that it has the same name in Forever is not confirmed.
+local NEVER_TRACK = { ["shoot"] = true }
 local FONT = "Fonts\\FRIZQT__.TTF"
 
 local issecret = issecretvalue or function() return false end
@@ -368,12 +371,21 @@ end
 --        or "known",  start, duration   (numbers we may read and do math on)
 --        or "secret"                    (active, but numbers are hidden; use duration object)
 ------------------------------------------------------------------------
+-- A spell that is only in "start recovery" (the global cooldown, or the pause after a wand shot) has
+-- timeUntilEndOfStartRecovery set and no cooldown category (Forever API docs, SpellCooldownInfo).
+-- Seen live 15 Oct 2026 (Warlock, wand, Shadow Bolt in combat): isActive true, isOnGCD nil,
+-- startRecovery secret (= set), category nil. Testing a secret value against nil does not error.
+local function InStartRecovery(info)
+    return info.timeUntilEndOfStartRecovery ~= nil and info.activeCategory == nil
+end
+
 local function ReadCooldown(s)
-    local start, dur, active
+    local start, dur, active, recovery
     if C_Spell and C_Spell.GetSpellCooldown then
         local info = C_Spell.GetSpellCooldown(s.name) or C_Spell.GetSpellCooldown(s.id)
         if not info then s.cEnd = nil; return "none" end
         start, dur, active = info.startTime, info.duration, info.isActive
+        recovery = InStartRecovery(info)
     elseif GetSpellCooldown then
         start, dur = GetSpellCooldown(s.name)
     else
@@ -394,7 +406,7 @@ local function ReadCooldown(s)
     if s.cEnd and s.cEnd > now and active ~= false then
         return "known", s.cStart, s.cEnd - s.cStart
     end
-    if active and not s.onGCD then return "secret" end
+    if active and not s.onGCD and not recovery then return "secret" end
     return "none"
 end
 
@@ -429,7 +441,7 @@ local function UpdateCooldowns()
     local showReady = InCombat() or db.readyAlways
     for name, s in pairs(known) do
         local lname = name:lower()
-        if not ignore[lname] then
+        if not ignore[lname] and not NEVER_TRACK[lname] then
             local pinned = pins[lname] and true or false
             local kind, start, dur = ReadCooldown(s)
             if kind == "known" then
@@ -1981,6 +1993,22 @@ local function Debug(arg)
                 found.name, tostring(found.id), kind,
                 st and string.format("%.1f", st) or "-", d and string.format("%.1f", d) or "-",
                 tostring((currentProf and currentProf.ignore[found.name:lower()]) and true or false)))
+            -- what the game itself reports right now (use it in combat, while shooting a wand)
+            local function fv(v) if v == nil then return "nil" end if issecret(v) then return "secret" end return tostring(v) end
+            local ok, info = pcall(C_Spell and C_Spell.GetSpellCooldown or function() end, found.id)
+            if ok and info then
+                local zero = "n/a"
+                if C_Spell.GetSpellCooldownDuration then
+                    local ok2, obj = pcall(C_Spell.GetSpellCooldownDuration, found.id, true)
+                    if ok2 and obj and obj.IsZero then
+                        local ok3, z = pcall(obj.IsZero, obj)
+                        zero = ok3 and fv(z) or "error"
+                    elseif ok2 then zero = "no object" end
+                end
+                print(string.format("    raw: isActive %s, isOnGCD %s, cached onGCD %s, isEnabled %s, category %s, startRecovery %s, duration %s | cooldown ignoring GCD is zero: %s",
+                    fv(info.isActive), fv(info.isOnGCD), tostring(found.onGCD), fv(info.isEnabled),
+                    fv(info.activeCategory), fv(info.timeUntilEndOfStartRecovery), fv(info.duration), zero))
+            end
         end
     end
 end
