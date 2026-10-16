@@ -19,6 +19,7 @@ local defaults = {
     minimapHide = false,
     readyAlways = false,      -- pinned abilities: show grayed-out when ready in combat only (false) or always (true)
     swingCombatOnly = true,   -- hide Forever's built-in swing timer bars out of combat
+    comboAlways = false,      -- combo points: always show (false = in combat or while you hold points)
     trackFood = false,        -- optional food buff icon ("Well Fed") next to the buffs; red while it is missing
     cd   = { point = "CENTER", relPoint = "CENTER", x = 0, y = -150 },
     pala = { point = "CENTER", relPoint = "CENTER", x = 0, y = -215 },
@@ -28,6 +29,7 @@ local defaults = {
     lastSpec = {},        -- CLASS -> last tab viewed in Tracked spells
     buff = { point = "CENTER", relPoint = "CENTER", x = 0, y = -215 },
     pbuff = { point = "CENTER", relPoint = "CENTER", x = 0, y = -280 },   -- Paladin active-buff row
+    combo = { point = "CENTER", relPoint = "CENTER", x = 0, y = -110 },   -- combo points (Rogue, Druid)
     buffIcons = {},       -- buff group key -> last seen icon
     durations = {},       -- aura name -> last seen duration (for combat timers)
 }
@@ -39,6 +41,7 @@ local editMode = false    -- frames can only be dragged in edit mode (never save
 local editHook            -- set by the options window to refresh its button
 local className, playerClass = UnitClass("player")
 local isPaladin = (playerClass == "PALADIN")
+local COMBO_CLASS = (playerClass == "ROGUE" or playerClass == "DRUID")
 
 local GAP = 4
 local MIN_CD = 2          -- ignore anything at or under the global cooldown
@@ -269,7 +272,9 @@ local function ApplyPosition(frame, key)
 end
 
 local function ApplyLock()
-    for _, f in ipairs({ SpellCDTrackerCDFrame, SpellCDTrackerPalaFrame, SpellCDTrackerBuffFrame }) do
+    -- by name: a table with a nil hole (Pala frame on non-Paladins) would stop ipairs before the later frames
+    for _, name in ipairs({ "SpellCDTrackerCDFrame", "SpellCDTrackerPalaFrame", "SpellCDTrackerBuffFrame", "SpellCDTrackerComboFrame" }) do
+        local f = _G[name]
         if f then
             f:EnableMouse(editMode)      -- clicks pass straight through when not editing
             f.bg:SetShown(editMode)
@@ -1452,6 +1457,10 @@ local function RefreshSpells()
     win.gearToggle:SetShown(hasGear)
     win.gearToggle:ClearAllPoints()
     win.gearToggle:SetPoint("TOPLEFT", win, "TOPLEFT", selClass == "PALADIN" and 372 or 20, -158)
+    local hasCombo = selClass == "ROGUE" or selClass == "DRUID"
+    win.comboToggle:SetShown(hasCombo)
+    win.comboToggle:ClearAllPoints()
+    win.comboToggle:SetPoint("TOPLEFT", win, "TOPLEFT", hasGear and 200 or 20, -158)
 
     spellList = ListSpells(selClass)
     local maxOff = math.max(0, #spellList - SPELL_ROWS)
@@ -1599,6 +1608,12 @@ local function BuildSpells()
     win.gearToggle = MakeCheck(win, "Gear warning",
         function() return ViewProf().gear ~= false end,
         function(v) EditProf().gear = v; RefreshSpells() end,
+        -158, spellsRefreshers, 20)
+
+    -- combo points toggle (Rogue, Druid)
+    win.comboToggle = MakeCheck(win, "Combo points",
+        function() return ViewProf().combo ~= false end,
+        function(v) EditProf().combo = v; RefreshSpells() end,
         -158, spellsRefreshers, 20)
 
     -- track all / none, spec note, reset
@@ -1785,6 +1800,11 @@ local function BuildOptions()
     MakeCheck(options, "Ready icons also out of combat",
         function() return db.readyAlways end, function(v) db.readyAlways = v end, y)
     y = y - 30
+    if COMBO_CLASS then
+        MakeCheck(options, "Combo points always visible",
+            function() return db.comboAlways end, function(v) db.comboAlways = v end, y)
+        y = y - 30
+    end
     MakeCheck(options, "Track food buff (Well Fed)",
         function() return db.trackFood end, function(v) db.trackFood = v end, y)
     y = y - 30
@@ -1802,6 +1822,8 @@ local function BuildOptions()
         if palaFrame then ApplyPosition(palaFrame, "pala") end
         db.buff = CopyTable(defaults.buff); db.pbuff = CopyTable(defaults.pbuff)
         if buffFrame then ApplyPosition(buffFrame, BUFF_KEY) end
+        db.combo = CopyTable(defaults.combo)
+        if comboFrame then ApplyPosition(comboFrame, "combo") end
     end)
 
     local spellsBtn = CreateFrame("Button", nil, options, "UIPanelButtonTemplate")
@@ -1950,6 +1972,105 @@ UpdateMinimapButton = function()
 end
 
 ------------------------------------------------------------------------
+-- combo points (Rogue; Druid while in cat form)
+-- Assumptions, not yet confirmed in the live client: points come from UnitPower("player", ComboPoints) (Enum.PowerType 4,
+-- from the Forever UI source), they may be secret values in combat (then a status bar is drawn instead of pips, because
+-- StatusBar:SetValue is expected to accept secrets), and a Druid has a maximum of 0 outside cat form.
+------------------------------------------------------------------------
+local COMBO_POWER = (Enum and Enum.PowerType and Enum.PowerType.ComboPoints) or 4
+local MAX_PIPS = 8
+local comboFrame
+local comboInfo = "not built"
+
+local function BuildCombo()
+    comboFrame = CreateFrame("Frame", "SpellCDTrackerComboFrame", UIParent)
+    comboFrame:SetSize(120, 20)
+    comboFrame.pips = {}
+    for i = 1, MAX_PIPS do
+        local pip = CreateFrame("Frame", nil, comboFrame)
+        pip.border = pip:CreateTexture(nil, "BACKGROUND")
+        pip.border:SetPoint("TOPLEFT", -2, 2)
+        pip.border:SetPoint("BOTTOMRIGHT", 2, -2)
+        pip.border:SetColorTexture(0, 0, 0, 1)
+        pip.fill = pip:CreateTexture(nil, "ARTWORK")
+        pip.fill:SetAllPoints()
+        pip.fill:SetColorTexture(0.15, 0.15, 0.15, 1)
+        pip:Hide()
+        comboFrame.pips[i] = pip
+    end
+    -- fallback for secret values: a bar whose value the game fills in without us reading it
+    local bar = CreateFrame("StatusBar", nil, comboFrame)
+    bar:SetAllPoints()
+    bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    bar:SetStatusBarColor(1, 0.85, 0.1)
+    bar:SetMinMaxValues(0, 5)
+    bar:Hide()
+    comboFrame.bar = bar
+    comboFrame:Hide()
+end
+
+local function UpdateCombo()
+    if not comboFrame then return end
+    local prof = currentProf or EMPTY_PROF
+    local pts = UnitPower and UnitPower("player", COMBO_POWER)
+    local max = UnitPowerMax and UnitPowerMax("player", COMBO_POWER)
+    local secret = issecret(pts)
+    if max == nil or issecret(max) then max = 5 end
+    if max > MAX_PIPS then max = MAX_PIPS end
+    local ptsShown = (not secret and tonumber(pts)) or 0
+    comboInfo = string.format("points %s / max %s%s", secret and "secret" or tostring(pts), tostring(max), prof.combo == false and " | hidden by profile" or "")
+
+    local fighting = (InCombat() or (UnitAffectingCombat and UnitAffectingCombat("player"))) and true or false
+    local show
+    if editMode then
+        show = true
+        if max <= 0 then max = 5 end
+    elseif prof.combo == false or max <= 0 or pts == nil then
+        show = false                               -- Druid outside cat form has no combo point pool
+    elseif db.comboAlways then
+        show = true
+    elseif secret then
+        show = fighting                            -- cannot compare a secret to 0
+    else
+        show = fighting or ptsShown > 0
+    end
+    if not show then comboFrame:Hide(); return end
+
+    local size = math.max(14, math.floor((db.palaSize or 40) * 0.6))
+    local gap = 6
+    local key = size .. ":" .. max
+    if comboFrame.layoutKey ~= key then
+        comboFrame.layoutKey = key
+        comboFrame:SetSize(max * size + (max - 1) * gap, size)
+        for i = 1, MAX_PIPS do
+            local pip = comboFrame.pips[i]
+            pip:SetSize(size, size)
+            pip:ClearAllPoints()
+            pip:SetPoint("LEFT", comboFrame, "LEFT", (i - 1) * (size + gap), 0)
+        end
+        comboFrame.bar:SetMinMaxValues(0, max)
+    end
+    if secret then
+        for i = 1, MAX_PIPS do comboFrame.pips[i]:Hide() end
+        comboFrame.bar:SetValue(pts)
+        comboFrame.bar:Show()
+    else
+        comboFrame.bar:Hide()
+        for i = 1, MAX_PIPS do
+            local pip = comboFrame.pips[i]
+            if i <= max then
+                pip:Show()
+                if i <= ptsShown then pip.fill:SetColorTexture(1, 0.85, 0.1, 1)
+                else pip.fill:SetColorTexture(0.15, 0.15, 0.15, 1) end
+            else
+                pip:Hide()
+            end
+        end
+    end
+    comboFrame:Show()
+end
+
+------------------------------------------------------------------------
 -- debug helper
 ------------------------------------------------------------------------
 local function Debug(arg)
@@ -1970,6 +2091,10 @@ local function Debug(arg)
         print("  buffs: " .. table.concat(parts, ", ") .. (hasImbues and (" | imbues main/off: "
             .. tostring(imbueState.main and true or false) .. "/" .. tostring(imbueState.off and true or false)
             .. " | source: " .. tostring(imbueApi) .. " | raw: " .. tostring(imbueRaw)) or ""))
+    end
+    if COMBO_CLASS then
+        print("  combo: " .. comboInfo .. " | always visible: " .. tostring(db.comboAlways and true or false)
+            .. " | shown: " .. tostring(comboFrame and comboFrame:IsShown() and true or false))
     end
     if gearRule then
         print("  gear: " .. (#gearWarn > 0 and ("WARNING " .. table.concat(gearWarn, ", ")) or "ok") .. " | " .. gearInfo)
@@ -2033,6 +2158,7 @@ driver:SetScript("OnUpdate", function(_, dt)
     if db.trackFood then Guard(UpdateFood) else foodState = nil end
     if isPaladin then Guard(UpdatePaladin) end
     if buffFrame then Guard(UpdateBuffs) end
+    if comboFrame then Guard(UpdateCombo) end
 end)
 
 driver:RegisterEvent("ADDON_LOADED")
@@ -2076,6 +2202,12 @@ driver:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
             BuildBuffs()
             MakeMovable(buffFrame, BUFF_KEY)
             ApplyPosition(buffFrame, BUFF_KEY)
+        end
+        if COMBO_CLASS then
+            BuildCombo()
+            MakeMovable(comboFrame, "combo")
+            comboFrame.title:SetText("Combo points (drag to move)")
+            ApplyPosition(comboFrame, "combo")
         end
         ApplyLock()
         BuildMinimapButton()
@@ -2146,6 +2278,8 @@ SlashCmdList["SPELLCDTRACKER"] = function(msg)
         if palaFrame then ApplyPosition(palaFrame, "pala") end
         db.buff = CopyTable(defaults.buff); db.pbuff = CopyTable(defaults.pbuff)
         if buffFrame then ApplyPosition(buffFrame, BUFF_KEY) end
+        db.combo = CopyTable(defaults.combo)
+        if comboFrame then ApplyPosition(comboFrame, "combo") end
         print("Spell Cooldown Tracker: positions reset")
     elseif cmd == "minimap" then
         local a = rest:lower()

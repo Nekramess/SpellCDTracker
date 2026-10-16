@@ -76,6 +76,21 @@ MUTATIONS = [
      "local showAura = prof.auras ~= false and defaultAura ~= nil", "local showAura = defaultAura ~= nil", ["tracking_test.py"]),
     ("food: /scdt food (no argument) no longer toggles back off",
      "db.trackFood = not db.trackFood", "db.trackFood = true", ["food_test.py"]),
+    ("combo: secret points compared (secret guard off)",
+     "local secret = issecret(pts)", "local secret = false", ["combo_test.py"]),
+    ("combo: Druid outside cat form still shows",
+     "elseif prof.combo == false or max <= 0 or pts == nil then", "elseif prof.combo == false or pts == nil then", ["combo_test.py"]),
+    ("combo: profile switch ignored",
+     "elseif prof.combo == false or max <= 0 or pts == nil then", "elseif max <= 0 or pts == nil then", ["combo_test.py"]),
+    ("combo: filled pips count off by one",
+     "if i <= ptsShown then pip.fill", "if i < ptsShown then pip.fill", ["combo_test.py"]),
+    ("combo: shown out of combat with 0 points",
+     "show = fighting or ptsShown > 0", "show = true", ["combo_test.py"]),
+    ("combo: reset positions in /scdt reset forgets it",
+     "        db.combo = CopyTable(defaults.combo)\n        if comboFrame then ApplyPosition(comboFrame, \"combo\") end\n        print(\"Spell Cooldown Tracker: positions reset\")",
+     "        print(\"Spell Cooldown Tracker: positions reset\")", ["combo_test.py"]),
+    ("ApplyLock stops at the first missing frame (non-Paladin buff row not draggable)",
+     "local f = _G[name]\n        if f then", "local f = _G[name]\n        if not f then break end\n        if f then", ["combo_test.py"]),
 ]
 
 def run(files, lua):
