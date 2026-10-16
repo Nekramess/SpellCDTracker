@@ -26,7 +26,7 @@ W = {
   now = 1000, combat = false,
   -- what is secret right now (set by combat())
   secretCd = false, secretAurasFlag = false, secretAuraValues = false, secretTotems = false,
-  secretEnchant = false, secretEquip = false, secretUnit = false, secretPower = false, combo = 0, comboMax = 5, powerType = 3, power = 100, powerMax = 100,
+  secretEnchant = false, secretEquip = false, secretUnit = false, secretPower = false, combo = 0, comboMax = 5, powerType = 3, power = 100, dual = true, powerMax = 100,
   class = "PALADIN", className = "Paladin",
   spells = {}, book = {}, actions = {},
   buffs = {}, totems = {}, enchant = {}, equip = {}, items = {}, pet = true,
@@ -82,6 +82,8 @@ function UnitPower(u, t)
   return 0
 end
 function UnitPowerMax(u, t) if t == 4 then return W.comboMax end; if t == W.powerType then return W.powerMax end; return 0 end
+-- PlayerScriptDocumentation.lua: CanDualWield() -> bool (no arguments)
+function CanDualWield() return W.dual end
 function UnitPowerType(u) return W.powerType, "POWER", 1, 1, 1 end
 SlashCmdList = {}
 UISpecialFrames = {}
@@ -468,6 +470,9 @@ class Client:
         """Give a spell a resource cost (ptype 3 energy, 1 rage, 0 mana) and optionally a combo point requirement."""
         self.lua.globals().NAME = name
         self.exe(f"W.spells[NAME].cost = {{ type = {ptype}, cost = {cost} }}; W.spells[NAME].needCombo = {need_combo if need_combo else 'nil'}")
+
+    def set_dual_wield(self, can):
+        self.exe(f"W.dual = {str(bool(can)).lower()}")
 
     def set_combo(self, points, max_points=5):
         self.exe(f"W.combo = {points}; W.comboMax = {max_points}")

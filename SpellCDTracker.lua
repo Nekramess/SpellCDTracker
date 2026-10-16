@@ -1111,7 +1111,7 @@ local GEAR_RULES = {
     PALADIN = { offhand = true },
     WARRIOR = { offhand = true },
     SHAMAN  = { offhand = true },
-    ROGUE   = { offhand = true },
+    ROGUE   = { offhand = true, needsDualWield = true },   -- Rogues cannot use a shield: no off-hand to fill until they learn Dual Wield
     HUNTER  = { ranged = true },
 }
 local gearRule = GEAR_RULES[playerClass]
@@ -1145,8 +1145,14 @@ local function CheckGear()
     local main, mainId = SlotLoc(16)
     local off, offId = SlotLoc(17)
     local rng, rngId = SlotLoc(18)
-    gearInfo = string.format("main=%s(%s) off=%s(%s) ranged=%s(%s)", tostring(main), tostring(mainId),
-        tostring(off), tostring(offId), tostring(rng), tostring(rngId))
+    -- CanDualWield() is in Forever's PlayerScriptDocumentation (no arguments, returns a bool)
+    local dual
+    if CanDualWield then
+        local okd, res = pcall(CanDualWield)
+        if okd and not issecret(res) then dual = res and true or false end
+    end
+    gearInfo = string.format("main=%s(%s) off=%s(%s) ranged=%s(%s) canDualWield=%s", tostring(main), tostring(mainId),
+        tostring(off), tostring(offId), tostring(rng), tostring(rngId), tostring(dual))
     if gearRule.ranged then
         -- a ranged weapon can sit in the ranged slot or (in some clients) the main hand
         if not (RANGED_LOC[rng or ""] or RANGED_LOC[main or ""] or (rngId and not rng) or (mainId and not main)) then
@@ -1157,7 +1163,8 @@ local function CheckGear()
             gearWarn[#gearWarn + 1] = "main"
         elseif main and not TWO_HAND[main] and not RANGED_LOC[main] then
             -- one-hander: wants an off-hand item (unknown item type with an id present counts as filled)
-            if not offId then gearWarn[#gearWarn + 1] = "offhand" end
+            local cannot = gearRule.needsDualWield and dual == false     -- unknown (nil) still warns
+            if not offId and not cannot then gearWarn[#gearWarn + 1] = "offhand" end
         end
     end
 end

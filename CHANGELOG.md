@@ -8,7 +8,8 @@ Dates are when the change landed on `main` (from git history). Versions before 0
 - Pinned energy and rage abilities show their cost, light up when castable, and show the cost in red when short. Mana abilities keep the gray look.
 - New "Combo points" and "Resource bar" toggles per class and spec in Tracked spells; both movable with `/scdt edit` and reset by "Reset positions".
 - Fix: the buff row could not be dragged in Edit mode on any class except Paladin.
-- Tests: 718 checks, with mutation checks for every new behavior.
+- Fix: Rogues no longer get an off-hand warning until they can dual wield (they cannot use a shield). Uses the game's `CanDualWield()`; `/scdt debug` shows the value.
+- Tests: 726 checks, with mutation checks for every new behavior.
 
 ## 0.13.1 (15 Oct 2026)
 - Wand shots no longer make every spell look like it is on cooldown in combat.

@@ -27,7 +27,7 @@ MUTATIONS = [
     ("minimap auto no longer clears the override",
      "db.minimapShape = nil", 'db.minimapShape = "round"', ["slash_test.py", "minimap_test.py"]),
     ("gear: missing off hand no longer warns",
-     'if not offId then gearWarn[#gearWarn + 1] = "offhand" end', 'if offId then gearWarn[#gearWarn + 1] = "offhand" end', ["gear_test.py"]),
+     'if not offId and not cannot then gearWarn[#gearWarn + 1] = "offhand" end', 'if offId and not cannot then gearWarn[#gearWarn + 1] = "offhand" end', ["gear_test.py"]),
     ("gear: Hunter rule removed",
      "HUNTER  = { ranged = true },", "HUNTER  = {},", ["gear_test.py"]),
     ("gear: PLAYER_EQUIPMENT_CHANGED no longer forces a re-check",
@@ -107,6 +107,10 @@ MUTATIONS = [
      "(c.type == POWER_RAGE or c.type == POWER_ENERGY) and", "true and", ["power_test.py"]),
     ("cost icons: IsSpellUsable result ignored",
      "return usable and true or false, (not issecret(lacks))", "return true, (not issecret(lacks))", ["power_test.py"]),
+    ("gear: Rogue warned about the off hand even without Dual Wield",
+     "local cannot = gearRule.needsDualWield and dual == false", "local cannot = false", ["gear_test.py"]),
+    ("gear: shield classes skip the off-hand warning when they cannot dual wield",
+     "local cannot = gearRule.needsDualWield and dual == false", "local cannot = dual == false", ["gear_test.py"]),
 ]
 
 def run(files, lua):
