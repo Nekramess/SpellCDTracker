@@ -2,6 +2,12 @@
 
 Icons-only cooldown, buff, totem and pet/imbue tracker for World of Warcraft: Forever, for every class, with per-class and per-spec settings and a combat-only swing timer.
 
+## Rogue, Druid and Warrior
+- **Combo points** (Rogue; Druid in cat form): a row of pips, shown in combat or while you hold points.
+- **Resource bar** (Rogue energy, Warrior rage, Druid by form): shown in combat.
+- **Cost-aware icons**: pin an energy or rage ability in Tracked spells. Its icon shows the cost, lights up when you can cast it now, and shows the cost in red when you are short.
+- Both can be switched off per class and spec in Tracked spells, and moved with `/scdt edit`.
+
 ## Install
 Copy the `SpellCDTracker` folder into `Interface/AddOns/`, then restart the game or `/reload`. The folder keeps the name `SpellCDTracker`; only the name shown in game changed.
 
