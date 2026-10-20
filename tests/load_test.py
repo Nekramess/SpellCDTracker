@@ -15,6 +15,7 @@ t.check("mock integrity: issecretvalue exists (and not issecret)", c0.ev("issecr
 toc = [l.strip().replace("\\", "/") for l in open(os.path.join(ROOT, "SpellCDTracker.toc")) if l.strip() and not l.startswith("#")]
 LIBS = ["Libs/LibStub/LibStub.lua", "Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua", "Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua", "Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua"]
 t.check("toc lists the four libraries (dependency order), then SpellCDTracker.lua, and every listed file exists", toc == LIBS + ["SpellCDTracker.lua"] and all(os.path.exists(os.path.join(ROOT, f)) for f in toc), toc)
+t.check("toc names an IconTexture (the AddOn List shows a ? without it)", "## IconTexture: Interface\\Icons\\" in open(os.path.join(ROOT, "SpellCDTracker.toc")).read())
 t.check("toc Interface is 16001", "## Interface: 16001" in open(os.path.join(ROOT, "SpellCDTracker.toc")).read())
 t.check("toc declares SavedVariables: SpellCDTrackerDB", "## SavedVariables: SpellCDTrackerDB" in open(os.path.join(ROOT, "SpellCDTracker.toc")).read())
 
