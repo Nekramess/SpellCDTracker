@@ -15,8 +15,7 @@ local defaults = {
     cdSize = 40,
     palaSize = 40,
     textScale = 100,      -- percent
-    minimapAngle = 200,
-    minimapHide = false,
+    minimap = { hide = false, minimapPos = 200 },   -- LibDBIcon's fields
     readyAlways = false,      -- pinned abilities: show grayed-out when ready in combat only (false) or always (true)
     swingCombatOnly = true,   -- hide Forever's built-in swing timer bars out of combat
     trackFood = false,        -- optional food buff icon ("Well Fed") next to the buffs; red while it is missing
@@ -1789,7 +1788,7 @@ local function BuildOptions()
         function() return db.trackFood end, function(v) db.trackFood = v end, y)
     y = y - 30
     MakeCheck(options, "Hide minimap button",
-        function() return db.minimapHide end, function(v) db.minimapHide = v; UpdateMinimapButton() end, y)
+        function() return db.minimap.hide end, function(v) db.minimap.hide = v and true or false; UpdateMinimapButton() end, y)
     y = y - 40
 
     local reset = CreateFrame("Button", nil, options, "UIPanelButtonTemplate")
@@ -1829,124 +1828,49 @@ end
 ------------------------------------------------------------------------
 -- minimap button
 ------------------------------------------------------------------------
-local mm
+-- Registered through the standard LibDBIcon-1.0 library (embedded in Libs/), so minimap button
+-- managers treat it as a normal button instead of flagging it as a custom one. LibDBIcon also
+-- follows square and other non-round minimaps through GetMinimapShape. Not yet seen in the
+-- live client.
+local MM_NAME = "SpellCDTracker"
+local LDB = LibStub and LibStub("LibDataBroker-1.1", true)
+local DBIcon = LibStub and LibStub("LibDBIcon-1.0", true)
+local mmRegistered = false
 
--- Which quadrants of the minimap are round, per the GetMinimapShape convention that minimap
--- addons follow (https://warcraft.wiki.gg/wiki/GetMinimapShape). Order: bottom-right,
--- bottom-left, top-right, top-left. true = round, false = square corner.
-local MM_SHAPES = {
-    ["ROUND"] = {true, true, true, true},
-    ["SQUARE"] = {false, false, false, false},
-    ["CORNER-TOPLEFT"] = {false, false, false, true},
-    ["CORNER-TOPRIGHT"] = {false, false, true, false},
-    ["CORNER-BOTTOMLEFT"] = {false, true, false, false},
-    ["CORNER-BOTTOMRIGHT"] = {true, false, false, false},
-    ["SIDE-LEFT"] = {false, true, false, true},
-    ["SIDE-RIGHT"] = {true, false, true, false},
-    ["SIDE-TOP"] = {false, false, true, true},
-    ["SIDE-BOTTOM"] = {true, true, false, false},
-    ["TRICORNER-TOPLEFT"] = {false, true, true, true},
-    ["TRICORNER-TOPRIGHT"] = {true, false, true, true},
-    ["TRICORNER-BOTTOMLEFT"] = {true, true, false, true},
-    ["TRICORNER-BOTTOMRIGHT"] = {true, true, true, false},
-}
-
--- Shape to follow: the saved override ("round" or "square"), else whatever the minimap addon
--- reports through GetMinimapShape, else round.
-local function MinimapShape()
-    local mode = db and db.minimapShape
-    if mode == "square" then return "SQUARE" end
-    if mode == "round" then return "ROUND" end
-    local fn = _G.GetMinimapShape
-    if type(fn) == "function" then
-        local ok, name = pcall(fn)
-        if ok and type(name) == "string" and MM_SHAPES[name:upper()] then return name:upper() end
+-- LibDBIcon keeps the angle in minimapPos (degrees) and the hidden flag in hide. Settings from
+-- older versions (minimapAngle, minimapHide, minimapShape) carry over; the shape override is dropped.
+local function MigrateMinimapSettings()
+    local old = db.minimap
+    if type(old) ~= "table" then
+        old = { hide = db.minimapHide and true or false, minimapPos = tonumber(db.minimapAngle) or 200 }
+        db.minimap = old
     end
-    return "ROUND"
-end
-
--- Offset from the minimap centre for an angle, following the shape (pure).
-local function ShapedOffset(angle, halfW, halfH, shapeName)
-    local x, y = math.cos(angle), math.sin(angle)
-    local q = 1
-    if x < 0 then q = q + 1 end
-    if y > 0 then q = q + 2 end
-    local quads = MM_SHAPES[shapeName or "ROUND"] or MM_SHAPES.ROUND
-    if quads[q] then return x * halfW, y * halfH end
-    -- square corner: ride the box edge instead of the circle
-    local dw = math.sqrt(2 * halfW * halfW) - 10
-    local dh = math.sqrt(2 * halfH * halfH) - 10
-    return math.max(-halfW, math.min(x * dw, halfW)), math.max(-halfH, math.min(y * dh, halfH))
-end
-
-local function PositionMinimapButton()
-    if not mm then return end
-    local w = Minimap:GetWidth()
-    if type(w) ~= "number" then w = 140 end
-    local h = Minimap.GetHeight and Minimap:GetHeight()
-    if type(h) ~= "number" then h = w end
-    local x, y = ShapedOffset(math.rad(db.minimapAngle or 200), w / 2 + 5, h / 2 + 5, MinimapShape())
-    mm:ClearAllPoints()
-    mm:SetPoint("CENTER", Minimap, "CENTER", x, y)
+    if old.minimapPos == nil then old.minimapPos = tonumber(db.minimapAngle) or 200 end
+    old.hide = old.hide and true or false
+    db.minimapAngle, db.minimapHide, db.minimapShape = nil, nil, nil
+    return old
 end
 
 local function BuildMinimapButton()
-    mm = CreateFrame("Button", "SpellCDTrackerMinimapButton", Minimap)
-    mm:SetSize(31, 31)
-    mm:SetFrameStrata("MEDIUM")
-    mm:SetFrameLevel(8)
-    mm:RegisterForClicks("LeftButtonUp")
-    mm:RegisterForDrag("LeftButton")
-
-    local icon = mm:CreateTexture(nil, "ARTWORK")
-    icon:SetTexture("Interface\\Icons\\INV_Misc_PocketWatch_01")
-    icon:SetSize(20, 20)
-    icon:SetPoint("TOPLEFT", 7, -5)
-    icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
-
-    local border = mm:CreateTexture(nil, "OVERLAY")
-    border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
-    border:SetSize(53, 53)
-    border:SetPoint("TOPLEFT")
-
-    mm:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
-
-    mm:SetScript("OnClick", function() ToggleOptions() end)
-    mm:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:AddLine("Spell Cooldown Tracker")
-        GameTooltip:AddLine("Click: options", 1, 1, 1)
-        GameTooltip:AddLine("Drag: move button", 1, 1, 1)
-        GameTooltip:Show()
-    end)
-    mm:SetScript("OnLeave", function() GameTooltip:Hide() end)
-
-    mm:SetScript("OnDragStart", function(self)
-        self:SetScript("OnUpdate", function()
-            local mx, my = Minimap:GetCenter()
-            local cx, cy = GetCursorPosition()
-            local scale = Minimap:GetEffectiveScale()
-            cx, cy = cx / scale, cy / scale
-            local atan = math.atan2 or math.atan
-            db.minimapAngle = math.deg(atan(cy - my, cx - mx))
-            PositionMinimapButton()
-        end)
-    end)
-    mm:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
-
-    PositionMinimapButton()
+    if mmRegistered or not (LDB and DBIcon) then return end
+    local obj = LDB:NewDataObject(MM_NAME, {
+        type = "launcher",
+        text = "Spell Cooldown Tracker",
+        icon = "Interface\\Icons\\INV_Misc_PocketWatch_01",
+        OnClick = function() ToggleOptions() end,
+        OnTooltipShow = function(tt)
+            tt:AddLine("Spell Cooldown Tracker")
+            tt:AddLine("Click: options", 1, 1, 1)
+            tt:AddLine("Drag: move button", 1, 1, 1)
+        end,
+    })
+    DBIcon:Register(MM_NAME, obj, db.minimap)
+    mmRegistered = true
 end
 
--- A minimap addon can set its shape or size after this addon loads, so place the button again
--- once everything has loaded.
-local mmFix = CreateFrame("Frame")
-mmFix:RegisterEvent("PLAYER_LOGIN")
-mmFix:RegisterEvent("PLAYER_ENTERING_WORLD")
-mmFix:SetScript("OnEvent", function() if db then PositionMinimapButton() end end)
-
 UpdateMinimapButton = function()
-    if not mm then return end
-    if db.minimapHide then mm:Hide() else mm:Show() end
+    if not mmRegistered then return end
+    DBIcon:Refresh(MM_NAME, db.minimap)
 end
 
 ------------------------------------------------------------------------
@@ -2059,6 +1983,7 @@ driver:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
             db.palaSize = db.palaSize or db.size
             db.size = nil
         end
+        MigrateMinimapSettings()
         for k, v in pairs(defaults) do
             if db[k] == nil then
                 db[k] = (type(v) == "table") and CopyTable(v) or v
@@ -2149,23 +2074,19 @@ SlashCmdList["SPELLCDTRACKER"] = function(msg)
         print("Spell Cooldown Tracker: positions reset")
     elseif cmd == "minimap" then
         local a = rest:lower()
-        if a == "square" or a == "round" then
-            db.minimapShape = a
-        elseif a == "auto" then
-            db.minimapShape = nil
-        elseif a == "on" or a == "show" then
-            db.minimapHide = false
+        if a == "on" or a == "show" then
+            db.minimap.hide = false
         elseif a == "off" or a == "hide" then
-            db.minimapHide = true
+            db.minimap.hide = true
         else
-            print("Spell Cooldown Tracker: /scdt minimap on | off | square | round | auto (auto follows your minimap addon)")
+            print("Spell Cooldown Tracker: /scdt minimap on | off (the button follows your minimap's shape by itself)")
             return
         end
-        UpdateMinimapButton(); PositionMinimapButton()
-        print("Spell Cooldown Tracker: minimap button " .. (db.minimapHide and "hidden" or "shown") .. ", shape " .. (db.minimapShape or "auto"))
+        UpdateMinimapButton()
+        print("Spell Cooldown Tracker: minimap button " .. (db.minimap.hide and "hidden" or "shown"))
     elseif cmd == "debug" then
         Debug(rest)
     else
-        print("Spell Cooldown Tracker: /scdt (options) | spells | edit | swing | food [on|off] | size <n> | ignore <spell> | unignore <spell> | minimap [on|off|square|round|auto] | reset | debug [spell]")
+        print("Spell Cooldown Tracker: /scdt (options) | spells | edit | swing | food [on|off] | size <n> | ignore <spell> | unignore <spell> | minimap [on|off] | reset | debug [spell]")
     end
 end

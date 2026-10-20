@@ -4,7 +4,7 @@ from mock_env import Client, Checker
 t = Checker("savedvars_test")
 SPELLS = ["Judgement", "Holy Strike", "Consecration", "Seal of Righteousness"]
 
-DEFAULTS = {"cdSize": 40, "palaSize": 40, "textScale": 100, "minimapAngle": 200, "minimapHide": False, "readyAlways": False,
+DEFAULTS = {"cdSize": 40, "palaSize": 40, "textScale": 100, "minimap": {"hide": False, "minimapPos": 200}, "readyAlways": False,
             "swingCombatOnly": True, "cd": {"point": "CENTER", "relPoint": "CENTER", "x": 0, "y": -150},
             "pala": {"point": "CENTER", "relPoint": "CENTER", "x": 0, "y": -215},
             "buff": {"point": "CENTER", "relPoint": "CENTER", "x": 0, "y": -215}, "pbuff": {"point": "CENTER", "relPoint": "CENTER", "x": 0, "y": -280}}
@@ -16,7 +16,7 @@ for k, v in DEFAULTS.items():
     t.check(f"first run default: {k}", d.get(k) == v, d.get(k))
 for k in ["ignore", "profiles", "spellCache", "lastSpec", "buffIcons", "durations"]:
     t.check(f"first run default: {k} is a table", isinstance(d.get(k), (dict, list)), d.get(k))
-t.check("first run: no minimapShape saved (auto)", "minimapShape" not in d)
+t.check("first run: no old minimap keys saved", all(k not in d for k in ("minimapShape", "minimapAngle", "minimapHide")), d)
 t.check("default tables are independent copies (cd vs pala vs buff)", c.ev("SpellCDTrackerDB.cd ~= SpellCDTrackerDB.pala and SpellCDTrackerDB.pala ~= SpellCDTrackerDB.buff and SpellCDTrackerDB.buff ~= SpellCDTrackerDB.pbuff"))
 t.check("frames are placed from the defaults", c.pos("SpellCDTrackerCDFrame")[3:5] == [0, -150] and c.pos("SpellCDTrackerPalaFrame")[3:5] == [0, -215], c.pos("SpellCDTrackerCDFrame"))
 c2 = Client("PALADIN").boot(SPELLS)
@@ -24,11 +24,23 @@ c.exe("SpellCDTrackerDB.cd.x = 99")
 t.check("a second login's defaults are not contaminated by edits (copies, not shared)", c2.db()["cd"]["x"] == 0)
 
 # ---------------------------------------------------------------- partial / older databases
-c = Client("PALADIN", saved={"cdSize": 60, "minimapHide": True, "swingCombatOnly": False, "readyAlways": True}).boot(SPELLS)
+c = Client("PALADIN", saved={"cdSize": 60, "swingCombatOnly": False, "readyAlways": True, "minimap": {"hide": True, "minimapPos": 90}}).boot(SPELLS)
 d = c.db()
-t.check("saved values win over defaults, including false", d["cdSize"] == 60 and d["minimapHide"] is True and d["swingCombatOnly"] is False and d["readyAlways"] is True, d)
+t.check("saved values win over defaults, including false", d["cdSize"] == 60 and d["minimap"] == {"hide": True, "minimapPos": 90} and d["swingCombatOnly"] is False and d["readyAlways"] is True, d)
+
 t.check("missing keys are filled with defaults", d["palaSize"] == 40 and d["textScale"] == 100 and d["cd"]["y"] == -150 and d["pbuff"]["y"] == -280)
 t.check("swing option saved as false is respected: bars left alone (alpha 1)", c.ev("SwingTimerMainHandFrame._alpha") == 1)
+
+# settings from before LibDBIcon (minimapAngle / minimapHide / minimapShape) carry over
+c = Client("PALADIN", saved={"minimapHide": True, "minimapAngle": 123.5, "minimapShape": "square"}).boot(SPELLS)
+d = c.db()
+t.check("old minimap settings migrate to LibDBIcon's table", d["minimap"] == {"hide": True, "minimapPos": 123.5}, d.get("minimap"))
+t.check("old minimap keys are removed (angle, hide, shape override)", all(k not in d for k in ("minimapAngle", "minimapHide", "minimapShape")), d)
+t.check("old hidden setting keeps the button hidden", c.mm()["_shown"] is False)
+c = Client("PALADIN", saved={"minimapAngle": "junk"}).boot(SPELLS)
+t.check("unusable old angle: default 200, not hidden", c.db()["minimap"] == {"hide": False, "minimapPos": 200}, c.db().get("minimap"))
+c = Client("PALADIN", saved={"minimap": "garbage"}).boot(SPELLS)
+t.check("non-table minimap setting replaced by defaults", c.db()["minimap"] == {"hide": False, "minimapPos": 200}, c.db().get("minimap"))
 
 c = Client("MAGE", saved={"size": 50}).boot(["Fireball"])
 d = c.db()
@@ -38,12 +50,12 @@ t.check("migration keeps an existing cdSize", c.db()["cdSize"] == 30 and c.db()[
 
 # ---------------------------------------------------------------- round trip: change things, 'reload', compare behaviour
 c = Client("PALADIN").boot(SPELLS)
-c.slash("size 56"); c.slash("minimap square"); c.slash("minimap off"); c.slash("swing")
+c.slash("size 56"); c.slash("minimap off"); c.slash("swing")
 c.slash("ignore Consecration")
 c.slash("spells"); c.click_row("Judgement", "pin", False)
 c.slash("")                                    # options
 c.click_check("Ready icons also out of combat", True)
-c.exe("SpellCDTrackerDB.minimapAngle = 123.5")
+c.exe("SpellCDTrackerDB.minimap.minimapPos = 123.5")
 c.exe("SpellCDTrackerCDFrame._pt = { 'TOP', UIParent, 'TOP', 11, -22 }; SpellCDTrackerCDFrame._scripts.OnDragStop(SpellCDTrackerCDFrame)")
 c.exe("SpellCDTrackerBuffFrame._pt = { 'LEFT', UIParent, 'LEFT', 5, 6 }; SpellCDTrackerBuffFrame._scripts.OnDragStop(SpellCDTrackerBuffFrame)")
 before = c.db()
@@ -53,7 +65,7 @@ t.check("buff frame drag saves into 'pbuff' for a Paladin (not 'buff')", before[
 c2 = Client("PALADIN", saved=before).boot(SPELLS)
 t.check("round trip: saved table comes back identical after login (nothing added or lost by loading)", c2.db() == before, {k: (before.get(k), c2.db().get(k)) for k in set(before) | set(c2.db()) if before.get(k) != c2.db().get(k)})
 t.check("round trip: sizes", c2.db()["cdSize"] == 56 and c2.db()["palaSize"] == 56)
-t.check("round trip: minimap hidden, square, angle", c2.ev("SpellCDTrackerMinimapButton._shown") is False and c2.db()["minimapShape"] == "square" and c2.db()["minimapAngle"] == 123.5)
+t.check("round trip: minimap hidden and angle", c2.mm()["_shown"] is False and c2.db()["minimap"] == {"hide": True, "minimapPos": 123.5}, c2.db()["minimap"])
 t.check("round trip: swing option off -> bars untouched", c2.ev("SwingTimerMainHandFrame._alpha") == 1)
 t.check("round trip: cd frame placed at the saved position", c2.pos("SpellCDTrackerCDFrame")[0:5][0] == "TOP" and c2.pos("SpellCDTrackerCDFrame")[3:5] == [11, -22], c2.pos("SpellCDTrackerCDFrame"))
 c2.cooldown("Consecration", 8, 8); c2.cooldown("Holy Strike", 8, 8); c2.tick(0.2)

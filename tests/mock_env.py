@@ -86,6 +86,9 @@ local function same(f) return f end
 function M.SetScript(self, ev, fn) self._scripts[ev] = fn end
 function M.GetScript(self, ev) return self._scripts[ev] end
 function M.HookScript() end
+function M.GetParent(self) return self._parent end
+function M.CreateAnimationGroup(self) return CreateFrame("AnimationGroup", nil, self) end
+function M.CreateAnimation(self) return CreateFrame("Animation", nil, self) end
 function M.RegisterEvent(self, e) self._events[e] = true end
 function M.RegisterUnitEvent(self, e, unit) self._events[e] = true end
 function M.UnregisterEvent(self, e) self._events[e] = nil end
@@ -156,7 +159,7 @@ FMT.__index = function(t, k)
   return nil
 end
 function CreateFrame(kind, name, parent, tmpl)
-  local f = setmetatable({ _kind = kind, _name = name, _scripts = {}, _events = {}, _shown = true, _alpha = 1, _text = "", _template = tmpl }, FMT)
+  local f = setmetatable({ _kind = kind, _name = name, _parent = parent, _scripts = {}, _events = {}, _shown = true, _alpha = 1, _text = "", _template = tmpl }, FMT)
   if name then _G[name] = f end
   table.insert(CREATED, f)
   return f
@@ -311,7 +314,7 @@ class Client:
     """One simulated login. The class is fixed at load time (the addon reads UnitClass once)."""
 
     def __init__(self, cls="PALADIN", saved=None, lua_path=None, shims=("GetWeaponEnchantInfo",),
-                 minimap_shape=None, spec=None, spec_api=None):
+                 minimap_shape=None, spec=None, spec_api=None, skip_libs=False):
         self.lua = LuaRuntime(unpack_returned_tuples=True)
         self.printed = []
         self.raised = []
@@ -326,6 +329,7 @@ class Client:
             self.lua.execute("function UnitBuff() return nil end")
         self.lua_path = lua_path or os.environ.get("SCDT_LUA") or os.path.join(ROOT, "SpellCDTracker.lua")
         self.saved = saved
+        self.skip_libs = skip_libs          # simulate a broken install with the Libs folder missing
         if saved is not None:
             self.set_saved(saved)
         if minimap_shape is not None:
@@ -458,7 +462,9 @@ class Client:
         self.files = files
         mk = self.lua.eval("function(src, name) local f, e = loadstring(src, '=' .. name); if not f then error(e) end return f end")
         for fn in files:
-            path = self.lua_path if fn == ADDON + ".lua" else os.path.join(ROOT, fn)
+            if self.skip_libs and fn.replace("\\", "/").startswith("Libs/"):
+                continue
+            path = self.lua_path if fn == ADDON + ".lua" else os.path.join(ROOT, fn.replace("\\", "/"))   # .toc paths may use backslashes
             src = open(path, encoding="utf-8").read()
             chunk = mk(src, fn)
             self._guard(chunk, ADDON, self.lua.table())
@@ -582,11 +588,14 @@ class Client:
         self.lua.globals().FN = frame_name
         return _to_py(self.ev("(function() local f = _G[FN]; local p = f._pt; return p end)()"))
 
+    MM = "LibStub('LibDBIcon-1.0'):GetMinimapButton('SpellCDTracker')"
+
     def mm(self):
-        return self.ev("SpellCDTrackerMinimapButton")
+        """The button LibDBIcon built for this addon (None when it is not registered)."""
+        return self.ev(self.MM)
 
     def mm_offset(self):
-        p = self.ev("SpellCDTrackerMinimapButton._pt")
+        p = self.ev(self.MM + "._pt")
         return (p[4], p[5])
 
 
