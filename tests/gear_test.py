@@ -102,6 +102,20 @@ c = setup("MAGE")
 c.slash("spells")
 t.check("Mage has no 'Gear warning' toggle", c.ev("SpellCDTrackerSpells.gearToggle._shown") is False)
 
+# Rogues cannot dual wield until they learn it (CanDualWield() false): no off-hand warning then; shield classes still warn
+c = setup("ROGUE", main="INVTYPE_WEAPON"); c.set_dual_wield(False); c.fire("PLAYER_EQUIPMENT_CHANGED"); c.tick(0.2)
+t.check("Rogue who cannot dual wield yet: no off-hand warning", warn(c) == [], c.icons(BUFF))
+c.slash("debug"); t.check("... debug shows canDualWield=false", any("canDualWield=false" in p for p in c.printed), c.printed)
+c.set_dual_wield(True); c.tick(1.1)
+t.check("learns Dual Wield: off-hand warning appears", warn(c) == ["offhand"])
+c = setup("ROGUE", main="INVTYPE_WEAPON"); c.exe("CanDualWield = nil"); c.tick(1.1)
+t.check("CanDualWield missing: Rogue still warns (unknown), no error", warn(c) == ["offhand"] and c.errors() == [], c.errors())
+for cls in ("WARRIOR", "SHAMAN", "PALADIN"):
+    c = setup(cls, main="INVTYPE_WEAPON"); c.set_dual_wield(False); c.fire("PLAYER_EQUIPMENT_CHANGED"); c.tick(0.2)
+    t.check(f"{cls} cannot dual wield yet but can use a shield: still warns", warn(c) == ["offhand"])
+c = setup("ROGUE"); c.set_dual_wield(False); c.fire("PLAYER_EQUIPMENT_CHANGED"); c.tick(0.2)
+t.check("Rogue with an empty main hand still gets the main-hand warning without Dual Wield", warn(c) == ["main"], c.icons(BUFF))
+
 # debug line
 c = setup("WARRIOR", main="INVTYPE_WEAPON"); c.slash("debug")
 t.check("debug prints 'gear: WARNING offhand' with the slot data", any("gear: WARNING offhand" in p and "main=INVTYPE_WEAPON" in p for p in c.printed), c.printed)
