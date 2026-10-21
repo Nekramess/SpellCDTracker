@@ -9,4 +9,4 @@ Copy the `SpellCDTracker` folder into `Interface/AddOns/`, then restart the game
 - `/scdt` options, `/scdt spells` Tracked spells, `/scdt edit` move frames, `/scdt food on|off` optional food buff icon ("Well Fed", off by default; shown next to your buffs and red while missing), `/scdt minimap on|off` minimap button (follows square minimaps by itself), `/scdt debug` diagnostics
 
 ## Libraries
-The minimap button is registered through the standard LibDBIcon-1.0 library (embedded in `Libs/` with LibStub, CallbackHandler-1.0 and LibDataBroker-1.1), so minimap button managers handle it like any other button. Not yet seen in the live Forever client.
+The minimap button is registered through the standard LibDBIcon-1.0 library (embedded in `Libs/` with LibStub, CallbackHandler-1.0 and LibDataBroker-1.1), so minimap button managers handle it like any other button. Confirmed in the live client on 20 Oct 2026 with Leatrix Plus' "Enhance minimap" (author's test).
