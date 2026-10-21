@@ -18,6 +18,7 @@ local defaults = {
     minimap = { hide = false, minimapPos = 200 },   -- LibDBIcon's fields
     readyAlways = false,      -- pinned abilities: show grayed-out when ready in combat only (false) or always (true)
     swingCombatOnly = true,   -- hide Forever's built-in swing timer bars out of combat
+    comboAlways = false,      -- combo points: always show (false = in combat or while you hold points)
     trackFood = false,        -- optional food buff icon ("Well Fed") next to the buffs; red while it is missing
     cd   = { point = "CENTER", relPoint = "CENTER", x = 0, y = -150 },
     pala = { point = "CENTER", relPoint = "CENTER", x = 0, y = -215 },
@@ -27,6 +28,8 @@ local defaults = {
     lastSpec = {},        -- CLASS -> last tab viewed in Tracked spells
     buff = { point = "CENTER", relPoint = "CENTER", x = 0, y = -215 },
     pbuff = { point = "CENTER", relPoint = "CENTER", x = 0, y = -280 },   -- Paladin active-buff row
+    combo = { point = "CENTER", relPoint = "CENTER", x = 0, y = -110 },   -- combo points (Rogue, Druid)
+    power = { point = "CENTER", relPoint = "CENTER", x = 0, y = -135 },   -- energy / rage / mana bar (Rogue, Druid, Warrior)
     buffIcons = {},       -- buff group key -> last seen icon
     durations = {},       -- aura name -> last seen duration (for combat timers)
 }
@@ -38,6 +41,8 @@ local editMode = false    -- frames can only be dragged in edit mode (never save
 local editHook            -- set by the options window to refresh its button
 local className, playerClass = UnitClass("player")
 local isPaladin = (playerClass == "PALADIN")
+local COMBO_CLASS = (playerClass == "ROGUE" or playerClass == "DRUID")
+local POWER_CLASS = (playerClass == "ROGUE" or playerClass == "DRUID" or playerClass == "WARRIOR")
 
 local GAP = 4
 local MIN_CD = 2          -- ignore anything at or under the global cooldown
@@ -268,7 +273,9 @@ local function ApplyPosition(frame, key)
 end
 
 local function ApplyLock()
-    for _, f in ipairs({ SpellCDTrackerCDFrame, SpellCDTrackerPalaFrame, SpellCDTrackerBuffFrame }) do
+    -- by name: a table with a nil hole (Pala frame on non-Paladins) would stop ipairs before the later frames
+    for _, name in ipairs({ "SpellCDTrackerCDFrame", "SpellCDTrackerPalaFrame", "SpellCDTrackerBuffFrame", "SpellCDTrackerComboFrame", "SpellCDTrackerPowerFrame" }) do
+        local f = _G[name]
         if f then
             f:EnableMouse(editMode)      -- clicks pass straight through when not editing
             f.bg:SetShown(editMode)
@@ -432,6 +439,27 @@ end
 local cdFrame = CreateFrame("Frame", "SpellCDTrackerCDFrame", UIParent)
 cdFrame.icons = {}
 
+-- Energy / rage cost of a spell (nil for anything else, e.g. mana). Whether you can pay it comes from IsSpellUsable, which
+-- the Forever docs do not mark secret, so it keeps working in combat; the numbers are never compared.
+local POWER_RAGE, POWER_ENERGY = 1, 3
+local function CostInfo(sp)
+    if not (C_Spell and C_Spell.GetSpellPowerCost and sp.id) then return nil end
+    local ok, costs = pcall(C_Spell.GetSpellPowerCost, sp.id)
+    if not ok or type(costs) ~= "table" then return nil end
+    for _, c in ipairs(costs) do
+        if (c.type == POWER_RAGE or c.type == POWER_ENERGY) and type(c.minCost) == "number" and not issecret(c.minCost) and c.minCost > 0 then
+            return c.minCost
+        end
+    end
+end
+
+local function Affordability(sp)
+    if not (C_Spell and C_Spell.IsSpellUsable) then return nil end
+    local ok, usable, lacks = pcall(C_Spell.IsSpellUsable, sp.id)
+    if not ok or issecret(usable) then return nil end
+    return usable and true or false, (not issecret(lacks)) and lacks and true or false
+end
+
 local function UpdateCooldowns()
     local now = GetTime()
     local active = {}
@@ -496,6 +524,21 @@ local function UpdateCooldowns()
             ic.text:SetText("")
             ic.icon:SetDesaturated(true)
             ic:SetAlpha(0.55)
+            -- energy / rage abilities: show the cost, colour the icon when you can cast it right now, red cost when short
+            local cost = CostInfo(a.s)
+            if cost then
+                local usable, lacks = Affordability(a.s)
+                ic.text:SetText(tostring(cost))
+                if usable then
+                    ic.icon:SetDesaturated(false)
+                    ic:SetAlpha(1)
+                    ic.text:SetTextColor(1, 1, 1)
+                elseif lacks then
+                    ic.text:SetTextColor(1, 0.3, 0.3)
+                else
+                    ic.text:SetTextColor(0.8, 0.8, 0.8)
+                end
+            end
         elseif a.kind == "known" then
             ic.boundSpell = nil
             ic.cd:SetHideCountdownNumbers(true)
@@ -1067,7 +1110,7 @@ local GEAR_RULES = {
     PALADIN = { offhand = true },
     WARRIOR = { offhand = true },
     SHAMAN  = { offhand = true },
-    ROGUE   = { offhand = true },
+    ROGUE   = { offhand = true, needsDualWield = true },   -- Rogues cannot use a shield: no off-hand to fill until they learn Dual Wield
     HUNTER  = { ranged = true },
 }
 local gearRule = GEAR_RULES[playerClass]
@@ -1101,8 +1144,14 @@ local function CheckGear()
     local main, mainId = SlotLoc(16)
     local off, offId = SlotLoc(17)
     local rng, rngId = SlotLoc(18)
-    gearInfo = string.format("main=%s(%s) off=%s(%s) ranged=%s(%s)", tostring(main), tostring(mainId),
-        tostring(off), tostring(offId), tostring(rng), tostring(rngId))
+    -- CanDualWield() is in Forever's PlayerScriptDocumentation (no arguments, returns a bool)
+    local dual
+    if CanDualWield then
+        local okd, res = pcall(CanDualWield)
+        if okd and not issecret(res) then dual = res and true or false end
+    end
+    gearInfo = string.format("main=%s(%s) off=%s(%s) ranged=%s(%s) canDualWield=%s", tostring(main), tostring(mainId),
+        tostring(off), tostring(offId), tostring(rng), tostring(rngId), tostring(dual))
     if gearRule.ranged then
         -- a ranged weapon can sit in the ranged slot or (in some clients) the main hand
         if not (RANGED_LOC[rng or ""] or RANGED_LOC[main or ""] or (rngId and not rng) or (mainId and not main)) then
@@ -1113,7 +1162,8 @@ local function CheckGear()
             gearWarn[#gearWarn + 1] = "main"
         elseif main and not TWO_HAND[main] and not RANGED_LOC[main] then
             -- one-hander: wants an off-hand item (unknown item type with an id present counts as filled)
-            if not offId then gearWarn[#gearWarn + 1] = "offhand" end
+            local cannot = gearRule.needsDualWield and dual == false     -- unknown (nil) still warns
+            if not offId and not cannot then gearWarn[#gearWarn + 1] = "offhand" end
         end
     end
 end
@@ -1451,6 +1501,17 @@ local function RefreshSpells()
     win.gearToggle:SetShown(hasGear)
     win.gearToggle:ClearAllPoints()
     win.gearToggle:SetPoint("TOPLEFT", win, "TOPLEFT", selClass == "PALADIN" and 372 or 20, -158)
+    local hasCombo = selClass == "ROGUE" or selClass == "DRUID"
+    local hasPower = selClass == "ROGUE" or selClass == "DRUID" or selClass == "WARRIOR"
+    win.comboToggle:SetShown(hasCombo)
+    win.powerToggle:SetShown(hasPower)
+    -- the toggles sit side by side after the gear one: x = 20, 180, 340
+    local slot = hasGear and selClass ~= "PALADIN" and 1 or 0
+    win.comboToggle:ClearAllPoints()
+    win.comboToggle:SetPoint("TOPLEFT", win, "TOPLEFT", 20 + 160 * slot, -158)
+    if hasCombo then slot = slot + 1 end
+    win.powerToggle:ClearAllPoints()
+    win.powerToggle:SetPoint("TOPLEFT", win, "TOPLEFT", 20 + 160 * slot, -158)
 
     spellList = ListSpells(selClass)
     local maxOff = math.max(0, #spellList - SPELL_ROWS)
@@ -1598,6 +1659,18 @@ local function BuildSpells()
     win.gearToggle = MakeCheck(win, "Gear warning",
         function() return ViewProf().gear ~= false end,
         function(v) EditProf().gear = v; RefreshSpells() end,
+        -158, spellsRefreshers, 20)
+
+    -- combo points toggle (Rogue, Druid)
+    win.comboToggle = MakeCheck(win, "Combo points",
+        function() return ViewProf().combo ~= false end,
+        function(v) EditProf().combo = v; RefreshSpells() end,
+        -158, spellsRefreshers, 20)
+
+    -- resource bar toggle (Rogue, Druid, Warrior)
+    win.powerToggle = MakeCheck(win, "Resource bar",
+        function() return ViewProf().power ~= false end,
+        function(v) EditProf().power = v; RefreshSpells() end,
         -158, spellsRefreshers, 20)
 
     -- track all / none, spec note, reset
@@ -1784,6 +1857,11 @@ local function BuildOptions()
     MakeCheck(options, "Ready icons also out of combat",
         function() return db.readyAlways end, function(v) db.readyAlways = v end, y)
     y = y - 30
+    if COMBO_CLASS then
+        MakeCheck(options, "Combo points always visible",
+            function() return db.comboAlways end, function(v) db.comboAlways = v end, y)
+        y = y - 30
+    end
     MakeCheck(options, "Track food buff (Well Fed)",
         function() return db.trackFood end, function(v) db.trackFood = v end, y)
     y = y - 30
@@ -1801,6 +1879,10 @@ local function BuildOptions()
         if palaFrame then ApplyPosition(palaFrame, "pala") end
         db.buff = CopyTable(defaults.buff); db.pbuff = CopyTable(defaults.pbuff)
         if buffFrame then ApplyPosition(buffFrame, BUFF_KEY) end
+        db.combo = CopyTable(defaults.combo)
+        if comboFrame then ApplyPosition(comboFrame, "combo") end
+        db.power = CopyTable(defaults.power)
+        if powerFrame then ApplyPosition(powerFrame, "power") end
     end)
 
     local spellsBtn = CreateFrame("Button", nil, options, "UIPanelButtonTemplate")
@@ -1874,6 +1956,171 @@ UpdateMinimapButton = function()
 end
 
 ------------------------------------------------------------------------
+-- combo points (Rogue; Druid while in cat form)
+-- Assumptions, not yet confirmed in the live client: points come from UnitPower("player", ComboPoints) (Enum.PowerType 4,
+-- from the Forever UI source), they may be secret values in combat (then a status bar is drawn instead of pips, because
+-- StatusBar:SetValue is expected to accept secrets), and a Druid has a maximum of 0 outside cat form.
+------------------------------------------------------------------------
+local COMBO_POWER = (Enum and Enum.PowerType and Enum.PowerType.ComboPoints) or 4
+local MAX_PIPS = 8
+local comboFrame
+local comboInfo = "not built"
+
+local function BuildCombo()
+    comboFrame = CreateFrame("Frame", "SpellCDTrackerComboFrame", UIParent)
+    comboFrame:SetSize(120, 20)
+    comboFrame.pips = {}
+    for i = 1, MAX_PIPS do
+        local pip = CreateFrame("Frame", nil, comboFrame)
+        pip.border = pip:CreateTexture(nil, "BACKGROUND")
+        pip.border:SetPoint("TOPLEFT", -2, 2)
+        pip.border:SetPoint("BOTTOMRIGHT", 2, -2)
+        pip.border:SetColorTexture(0, 0, 0, 1)
+        pip.fill = pip:CreateTexture(nil, "ARTWORK")
+        pip.fill:SetAllPoints()
+        pip.fill:SetColorTexture(0.15, 0.15, 0.15, 1)
+        pip:Hide()
+        comboFrame.pips[i] = pip
+    end
+    -- fallback for secret values: a bar whose value the game fills in without us reading it
+    local bar = CreateFrame("StatusBar", nil, comboFrame)
+    bar:SetAllPoints()
+    bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    bar:SetStatusBarColor(1, 0.85, 0.1)
+    bar:SetMinMaxValues(0, 5)
+    bar:Hide()
+    comboFrame.bar = bar
+    comboFrame:Hide()
+end
+
+local function UpdateCombo()
+    if not comboFrame then return end
+    local prof = currentProf or EMPTY_PROF
+    local pts = UnitPower and UnitPower("player", COMBO_POWER)
+    local max = UnitPowerMax and UnitPowerMax("player", COMBO_POWER)
+    local secret = issecret(pts)
+    if max == nil or issecret(max) then max = 5 end
+    if max > MAX_PIPS then max = MAX_PIPS end
+    local ptsShown = (not secret and tonumber(pts)) or 0
+    comboInfo = string.format("points %s / max %s%s", secret and "secret" or tostring(pts), tostring(max), prof.combo == false and " | hidden by profile" or "")
+
+    local fighting = (InCombat() or (UnitAffectingCombat and UnitAffectingCombat("player"))) and true or false
+    local show
+    if editMode then
+        show = true
+        if max <= 0 then max = 5 end
+    elseif prof.combo == false or max <= 0 or pts == nil then
+        show = false                               -- Druid outside cat form has no combo point pool
+    elseif db.comboAlways then
+        show = true
+    elseif secret then
+        show = fighting                            -- cannot compare a secret to 0
+    else
+        show = fighting or ptsShown > 0
+    end
+    if not show then comboFrame:Hide(); return end
+
+    local size = math.max(14, math.floor((db.palaSize or 40) * 0.6))
+    local gap = 6
+    local key = size .. ":" .. max
+    if comboFrame.layoutKey ~= key then
+        comboFrame.layoutKey = key
+        comboFrame:SetSize(max * size + (max - 1) * gap, size)
+        for i = 1, MAX_PIPS do
+            local pip = comboFrame.pips[i]
+            pip:SetSize(size, size)
+            pip:ClearAllPoints()
+            pip:SetPoint("LEFT", comboFrame, "LEFT", (i - 1) * (size + gap), 0)
+        end
+        comboFrame.bar:SetMinMaxValues(0, max)
+    end
+    if secret then
+        for i = 1, MAX_PIPS do comboFrame.pips[i]:Hide() end
+        comboFrame.bar:SetValue(pts)
+        comboFrame.bar:Show()
+    else
+        comboFrame.bar:Hide()
+        for i = 1, MAX_PIPS do
+            local pip = comboFrame.pips[i]
+            if i <= max then
+                pip:Show()
+                if i <= ptsShown then pip.fill:SetColorTexture(1, 0.85, 0.1, 1)
+                else pip.fill:SetColorTexture(0.15, 0.15, 0.15, 1) end
+            else
+                pip:Hide()
+            end
+        end
+    end
+    comboFrame:Show()
+end
+
+------------------------------------------------------------------------
+-- resource bar (Rogue energy, Warrior rage, Druid by form), shown in combat
+-- Assumption, not yet confirmed in the live client: UnitPower for the player may be a secret value in combat; the bar is a
+-- StatusBar, which is expected to accept secrets, and the number is only printed when it is readable.
+------------------------------------------------------------------------
+local powerFrame
+local powerInfo = "not built"
+local POWER_COLORS = { [0] = { 0.2, 0.4, 1 }, [1] = { 0.9, 0.15, 0.15 }, [3] = { 1, 0.95, 0.2 } }
+
+local function BuildPower()
+    powerFrame = CreateFrame("Frame", "SpellCDTrackerPowerFrame", UIParent)
+    powerFrame:SetSize(150, 16)
+    local back = powerFrame:CreateTexture(nil, "BACKGROUND")
+    back:SetAllPoints()
+    back:SetColorTexture(0, 0, 0, 0.8)
+    local bar = CreateFrame("StatusBar", nil, powerFrame)
+    bar:SetPoint("TOPLEFT", 2, -2)
+    bar:SetPoint("BOTTOMRIGHT", -2, 2)
+    bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    bar:SetMinMaxValues(0, 100)
+    powerFrame.bar = bar
+    local txt = bar:CreateFontString(nil, "OVERLAY")
+    txt:SetFont(FONT, 11, "OUTLINE")
+    txt:SetPoint("CENTER")
+    powerFrame.text = txt
+    powerFrame:Hide()
+end
+
+local function UpdatePower()
+    if not powerFrame then return end
+    local prof = currentProf or EMPTY_PROF
+    local ptype = UnitPowerType and UnitPowerType("player")
+    local cur = UnitPower and ptype and UnitPower("player", ptype)
+    local max = UnitPowerMax and ptype and UnitPowerMax("player", ptype)
+    local secret = issecret(cur) or issecret(max)
+    local fighting = (InCombat() or (UnitAffectingCombat and UnitAffectingCombat("player"))) and true or false
+    powerInfo = string.format("type %s | %s / %s%s", tostring(ptype), issecret(cur) and "secret" or tostring(cur),
+        issecret(max) and "secret" or tostring(max), prof.power == false and " | hidden by profile" or "")
+    local show
+    if editMode then show = true
+    elseif prof.power == false or cur == nil or max == nil then show = false
+    else show = fighting end
+    if not show then powerFrame:Hide(); return end
+
+    local scale = (db.palaSize or 40) / 40
+    local key = scale .. ":" .. tostring(ptype)
+    if powerFrame.layoutKey ~= key then
+        powerFrame.layoutKey = key
+        powerFrame:SetSize(math.floor(150 * scale), math.max(12, math.floor(16 * scale)))
+        local col = POWER_COLORS[ptype] or { 0.7, 0.7, 0.7 }
+        powerFrame.bar:SetStatusBarColor(col[1], col[2], col[3])
+    end
+    if cur == nil then cur, max = 0, 100 end
+    if secret then
+        powerFrame.bar:SetMinMaxValues(0, issecret(max) and 100 or max)
+        powerFrame.bar:SetValue(cur)
+        local ok = pcall(powerFrame.text.SetText, powerFrame.text, cur)      -- may or may not accept a secret
+        if not ok then powerFrame.text:SetText("") end
+    else
+        powerFrame.bar:SetMinMaxValues(0, math.max(max, 1))
+        powerFrame.bar:SetValue(cur)
+        powerFrame.text:SetText(tostring(cur))
+    end
+    powerFrame:Show()
+end
+
+------------------------------------------------------------------------
 -- debug helper
 ------------------------------------------------------------------------
 local function Debug(arg)
@@ -1894,6 +2141,13 @@ local function Debug(arg)
         print("  buffs: " .. table.concat(parts, ", ") .. (hasImbues and (" | imbues main/off: "
             .. tostring(imbueState.main and true or false) .. "/" .. tostring(imbueState.off and true or false)
             .. " | source: " .. tostring(imbueApi) .. " | raw: " .. tostring(imbueRaw)) or ""))
+    end
+    if COMBO_CLASS then
+        print("  combo: " .. comboInfo .. " | always visible: " .. tostring(db.comboAlways and true or false)
+            .. " | shown: " .. tostring(comboFrame and comboFrame:IsShown() and true or false))
+    end
+    if POWER_CLASS then
+        print("  power: " .. powerInfo .. " | shown: " .. tostring(powerFrame and powerFrame:IsShown() and true or false))
     end
     if gearRule then
         print("  gear: " .. (#gearWarn > 0 and ("WARNING " .. table.concat(gearWarn, ", ")) or "ok") .. " | " .. gearInfo)
@@ -1957,6 +2211,8 @@ driver:SetScript("OnUpdate", function(_, dt)
     if db.trackFood then Guard(UpdateFood) else foodState = nil end
     if isPaladin then Guard(UpdatePaladin) end
     if buffFrame then Guard(UpdateBuffs) end
+    if comboFrame then Guard(UpdateCombo) end
+    if powerFrame then Guard(UpdatePower) end
 end)
 
 driver:RegisterEvent("ADDON_LOADED")
@@ -2001,6 +2257,18 @@ driver:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
             BuildBuffs()
             MakeMovable(buffFrame, BUFF_KEY)
             ApplyPosition(buffFrame, BUFF_KEY)
+        end
+        if COMBO_CLASS then
+            BuildCombo()
+            MakeMovable(comboFrame, "combo")
+            comboFrame.title:SetText("Combo points (drag to move)")
+            ApplyPosition(comboFrame, "combo")
+        end
+        if POWER_CLASS then
+            BuildPower()
+            MakeMovable(powerFrame, "power")
+            powerFrame.title:SetText("Resource bar (drag to move)")
+            ApplyPosition(powerFrame, "power")
         end
         ApplyLock()
         BuildMinimapButton()
@@ -2071,6 +2339,10 @@ SlashCmdList["SPELLCDTRACKER"] = function(msg)
         if palaFrame then ApplyPosition(palaFrame, "pala") end
         db.buff = CopyTable(defaults.buff); db.pbuff = CopyTable(defaults.pbuff)
         if buffFrame then ApplyPosition(buffFrame, BUFF_KEY) end
+        db.combo = CopyTable(defaults.combo)
+        if comboFrame then ApplyPosition(comboFrame, "combo") end
+        db.power = CopyTable(defaults.power)
+        if powerFrame then ApplyPosition(powerFrame, "power") end
         print("Spell Cooldown Tracker: positions reset")
     elseif cmd == "minimap" then
         local a = rest:lower()

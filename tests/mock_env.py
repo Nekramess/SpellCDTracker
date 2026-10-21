@@ -26,7 +26,7 @@ W = {
   now = 1000, combat = false,
   -- what is secret right now (set by combat())
   secretCd = false, secretAurasFlag = false, secretAuraValues = false, secretTotems = false,
-  secretEnchant = false, secretEquip = false, secretUnit = false,
+  secretEnchant = false, secretEquip = false, secretUnit = false, secretPower = false, combo = 0, comboMax = 5, powerType = 3, power = 100, dual = true, powerMax = 100,
   class = "PALADIN", className = "Paladin",
   spells = {}, book = {}, actions = {},
   buffs = {}, totems = {}, enchant = {}, equip = {}, items = {}, pet = true,
@@ -72,7 +72,19 @@ for k in pairs(LOCALIZED_CLASS_NAMES_MALE) do CLASS_ICON_TCOORDS[k] = { 0, 0.25,
 C_Texture = { GetAtlasInfo = function() return nil end }
 BackdropTemplateMixin = {}
 INVSLOT_MAINHAND, INVSLOT_OFFHAND, INVSLOT_RANGED = 16, 17, 18
-Enum = { SpellBookSpellBank = { Player = 0, Pet = 1 }, SpellBookItemType = { None = 0, Spell = 1, FutureSpell = 2, PetAction = 3, Flyout = 4 } }
+Enum = { SpellBookSpellBank = { Player = 0, Pet = 1 }, SpellBookItemType = { None = 0, Spell = 1, FutureSpell = 2, PetAction = 3, Flyout = 4 },
+  PowerType = { Mana = 0, Rage = 1, Energy = 3, ComboPoints = 4, SoulShards = 7, HolyPower = 9 } }
+-- UnitPower / UnitPowerMax: SecretWhenUnitPowerRestricted in the Forever UI source; W.secretPower makes them return secrets
+function UnitPower(u, t)
+  if W.secretPower then return Secret() end
+  if t == 4 then return W.combo end
+  if t == W.powerType then return W.power end
+  return 0
+end
+function UnitPowerMax(u, t) if t == 4 then return W.comboMax end; if t == W.powerType then return W.powerMax end; return 0 end
+-- PlayerScriptDocumentation.lua: CanDualWield() -> bool (no arguments)
+function CanDualWield() return W.dual end
+function UnitPowerType(u) return W.powerType, "POWER", 1, 1, 1 end
 SlashCmdList = {}
 UISpecialFrames = {}
 
@@ -143,6 +155,10 @@ end
 function M.Clear(self) self._cdStart, self._cdDur, self._cdObj = nil, nil, nil end
 function M.SetHideCountdownNumbers(self, v) self._hideNums = v end
 function M.SetDrawEdge() end
+function M.SetValue(self, v) self._value = v end
+function M.SetMinMaxValues(self, a, b) self._min, self._max = a, b end
+function M.SetStatusBarTexture() end
+function M.SetStatusBarColor() end
 
 local FMT = {}
 FMT.__index = function(t, k)
@@ -218,6 +234,20 @@ function C_Spell.GetSpellCooldownDuration(x, ignoreGCD)
   local s = lookup(x)
   if not s then return nil end
   return { isDurationObject = true, spell = s.name }
+end
+-- SpellPowerCostInfo (SpellSharedDocumentation.lua) and IsSpellUsable (SpellDocumentation.lua: isUsable, insufficientPower)
+function C_Spell.GetSpellPowerCost(x)
+  local s = lookup(x)
+  if not s or not s.cost then return nil end
+  return { { type = s.cost.type, name = "X", cost = s.cost.cost, minCost = s.cost.cost, costPercent = 0, costPerSec = 0, requiredAuraID = 0, hasRequiredAura = false } }
+end
+function C_Spell.IsSpellUsable(x)
+  local s = lookup(x)
+  if not s then return false, false end
+  local c = s.cost
+  if c and c.type == W.powerType and W.power < c.cost then return false, true end
+  if s.needCombo and W.combo < s.needCombo then return false, false end
+  return true, false
 end
 C_SpellBook = {}
 function C_SpellBook.GetNumSpellBookSkillLines() return 1 end
@@ -437,10 +467,24 @@ class Client:
     def set_enchant(self, hand, ms):
         self.exe(f'W.enchant["{hand}"] = {{ ms = {ms} }}' if ms is not None else f'W.enchant["{hand}"] = nil')
 
+    def set_power(self, cur, max_points=100, ptype=3):
+        self.exe(f"W.power = {cur}; W.powerMax = {max_points}; W.powerType = {ptype}")
+
+    def set_cost(self, name, cost, ptype=3, need_combo=None):
+        """Give a spell a resource cost (ptype 3 energy, 1 rage, 0 mana) and optionally a combo point requirement."""
+        self.lua.globals().NAME = name
+        self.exe(f"W.spells[NAME].cost = {{ type = {ptype}, cost = {cost} }}; W.spells[NAME].needCombo = {need_combo if need_combo else 'nil'}")
+
+    def set_dual_wield(self, can):
+        self.exe(f"W.dual = {str(bool(can)).lower()}")
+
+    def set_combo(self, points, max_points=5):
+        self.exe(f"W.combo = {points}; W.comboMax = {max_points}")
+
     def combat(self, on, secrets=("cd", "auras", "totems", "enchant")):
         """Enter/leave combat. While in combat the listed APIs return secret values (restricted)."""
         self.exe(f"W.combat = {str(on).lower()}")
-        flags = {"cd": "secretCd", "totems": "secretTotems", "enchant": "secretEnchant", "equip": "secretEquip", "unit": "secretUnit"}
+        flags = {"cd": "secretCd", "totems": "secretTotems", "enchant": "secretEnchant", "equip": "secretEquip", "unit": "secretUnit", "power": "secretPower"}
         for k, lua_name in flags.items():
             self.exe(f"W.{lua_name} = {str(bool(on and k in secrets)).lower()}")
         a = bool(on and "auras" in secrets)
