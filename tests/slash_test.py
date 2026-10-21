@@ -82,25 +82,23 @@ t.check("/scdt reset restores default positions", d["cd"] == {"point": "CENTER",
 t.check("reset re-applies the frame position", c.ev("SpellCDTrackerCDFrame._pt[5]") == -150)
 t.check("reset prints", any("positions reset" in p for p in c.new_output()))
 
-# --- minimap subcommands (geometry is in minimap_test.py)
+# --- minimap subcommands (placement and the library are in minimap_test.py)
 c = fresh()
 c.slash("minimap off")
-t.check("minimap off hides the button and saves it", c.ev("SpellCDTrackerMinimapButton._shown") is False and c.db()["minimapHide"] is True)
+t.check("minimap off hides the button and saves it", c.mm()["_shown"] is False and c.db()["minimap"]["hide"] is True)
 c.slash("minimap on")
-t.check("minimap on shows it", c.ev("SpellCDTrackerMinimapButton._shown") is True and c.db()["minimapHide"] is False)
-c.slash("minimap hide"); t.check("minimap hide alias", c.db()["minimapHide"] is True)
-c.slash("minimap show"); t.check("minimap show alias", c.db()["minimapHide"] is False)
-c.slash("minimap square"); t.check("minimap square saves shape", c.db()["minimapShape"] == "square")
-c.slash("minimap round"); t.check("minimap round saves shape", c.db()["minimapShape"] == "round")
-c.slash("minimap auto"); t.check("minimap auto clears the override", "minimapShape" not in c.db())
-c.slash("Minimap SQUARE"); t.check("subcommand and argument are case-insensitive", c.db()["minimapShape"] == "square")
-t.check("minimap message reports hidden/shown and shape", any("minimap button shown, shape square" in p for p in c.new_output()))
-before = dict(c.db())
-c.slash("minimap banana")
-t.check("minimap with a bad argument prints usage and changes nothing",
-        any("on | off | square | round | auto" in p for p in c.new_output()) and c.db()["minimapShape"] == "square" and c.db()["minimapHide"] == before["minimapHide"])
-c.slash("minimap")
-t.check("bare /scdt minimap prints usage", any("on | off | square | round | auto" in p for p in c.new_output()))
+t.check("minimap on shows it", c.mm()["_shown"] is True and c.db()["minimap"]["hide"] is False)
+c.slash("minimap hide"); t.check("minimap hide alias", c.db()["minimap"]["hide"] is True and c.mm()["_shown"] is False)
+c.slash("minimap show"); t.check("minimap show alias", c.db()["minimap"]["hide"] is False and c.mm()["_shown"] is True)
+c.slash("Minimap OFF"); t.check("subcommand and argument are case-insensitive", c.db()["minimap"]["hide"] is True)
+t.check("minimap message reports hidden", any("minimap button hidden" in p for p in c.new_output()))
+c.slash("minimap on")
+t.check("minimap message reports shown", any("minimap button shown" in p for p in c.new_output()))
+before = dict(c.db()["minimap"])
+for bad in ("banana", "square", "round", "auto", ""):
+    c.slash("minimap " + bad)
+    t.check(f"minimap {bad!r} prints usage and changes nothing", any("on | off" in p for p in c.new_output()) and c.db()["minimap"] == before, c.new_output())
+t.check("old shape settings are no longer written", all(k not in c.db() for k in ("minimapShape", "minimapAngle", "minimapHide")))
 
 # --- unknown command and debug
 c = fresh()
@@ -118,7 +116,7 @@ t.check("/scdt debug on an unknown spell says not found", any("Nonexistent: not 
 # --- every subcommand on every class: no error
 for cls in ["WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "SHAMAN", "MAGE", "WARLOCK", "DRUID"]:
     c = fresh(cls)
-    for m in ["", "", "edit", "edit", "swing", "swing", "size 30", "spells", "spells", "reset", "minimap off", "minimap on", "minimap square", "minimap auto", "debug", "frobnicate"]:
+    for m in ["", "", "edit", "edit", "swing", "swing", "size 30", "spells", "spells", "reset", "minimap off", "minimap on", "minimap square", "debug", "frobnicate"]:
         c.slash(m); c.tick(0.2)
     t.check(f"{cls}: all subcommands run without an error", c.errors() == [], c.errors())
 

@@ -12,8 +12,10 @@ for name in ["C_Console", "issecret", "GetMinimapShape", "GetSpellInfo", "GetSpe
 t.check("mock integrity: issecretvalue exists (and not issecret)", c0.ev("issecretvalue ~= nil"))
 
 # toc list: files exist, in order
-toc = [l.strip() for l in open(os.path.join(ROOT, "SpellCDTracker.toc")) if l.strip() and not l.startswith("#")]
-t.check("toc lists SpellCDTracker.lua and every listed file exists", toc == ["SpellCDTracker.lua"] and all(os.path.exists(os.path.join(ROOT, f)) for f in toc), toc)
+toc = [l.strip().replace("\\", "/") for l in open(os.path.join(ROOT, "SpellCDTracker.toc")) if l.strip() and not l.startswith("#")]
+LIBS = ["Libs/LibStub/LibStub.lua", "Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua", "Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua", "Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua"]
+t.check("toc lists the four libraries (dependency order), then SpellCDTracker.lua, and every listed file exists", toc == LIBS + ["SpellCDTracker.lua"] and all(os.path.exists(os.path.join(ROOT, f)) for f in toc), toc)
+t.check("toc names an IconTexture (the AddOn List shows a ? without it)", "## IconTexture: Interface\\Icons\\" in open(os.path.join(ROOT, "SpellCDTracker.toc")).read())
 t.check("toc Interface is 16001", "## Interface: 16001" in open(os.path.join(ROOT, "SpellCDTracker.toc")).read())
 t.check("toc declares SavedVariables: SpellCDTrackerDB", "## SavedVariables: SpellCDTrackerDB" in open(os.path.join(ROOT, "SpellCDTracker.toc")).read())
 
@@ -32,7 +34,10 @@ for cls in CLASSES:
     t.check(f"{cls}: cooldown frame exists", c.ev("SpellCDTrackerCDFrame ~= nil"))
     t.check(f"{cls}: Paladin panel only for Paladin", c.ev("SpellCDTrackerPalaFrame ~= nil") == (cls == "PALADIN"))
     t.check(f"{cls}: buff frame exists for every class (all nine have buff groups)", c.ev("SpellCDTrackerBuffFrame ~= nil"))
-    t.check(f"{cls}: minimap button exists", c.ev("SpellCDTrackerMinimapButton ~= nil"))
+    t.check(f"{cls}: minimap button is registered with LibDBIcon", c.ev("LibStub('LibDBIcon-1.0'):IsRegistered('SpellCDTracker')") is True and c.mm() is not None)
+    custom = c.ev("(function() local o = {} for _, f in ipairs(CREATED) do if f._kind == 'Button' and f._parent == Minimap and not tostring(f._name):find('^LibDBIcon10_') then o[#o+1] = tostring(f._name) end end return table.concat(o, ',') end)()")
+    t.check(f"{cls}: no hand-built minimap button (a button manager flags those as 'custom'): {custom!r}", custom == "")
+    t.check(f"{cls}: old SpellCDTrackerMinimapButton frame is gone", c.ev("SpellCDTrackerMinimapButton") is None)
     c.tick(0.2, 30)
     t.check(f"{cls}: 6 seconds of ticks, no error", c.errors() == [], c.errors())
     c.slash("debug")

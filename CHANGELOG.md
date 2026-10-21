@@ -2,6 +2,11 @@
 
 Dates are when the change landed on `main` (from git history). Versions before 0.11.0 are from the project notes, not git history.
 
+## 0.14.1 (20 Oct 2026)
+- The minimap button now uses the standard LibDBIcon library (embedded in `Libs/`), so minimap button managers such as Leatrix Plus handle it like a normal button instead of calling it a custom button. Confirmed in the live client.
+- Your saved button position and hidden setting carry over. `/scdt minimap on|off` shows or hides it; the square/round/auto options are gone because the library follows square minimaps by itself.
+- The AddOn List shows the addon's own icon instead of a "?".
+
 ## 0.14.0 (15 Oct 2026)
 - Combo point tracker for Rogue and Druid (cat form): pips, with a bar fallback if the game hides the value in combat.
 - Resource bar for Rogue (energy), Warrior (rage) and Druid (by form), shown in combat.
