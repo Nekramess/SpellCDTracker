@@ -1,47 +1,72 @@
-"""Judgement pulled in combat (Paladin, seen live 7 Nov 2026): the timer never started when the first cast happened in
-combat. Out of combat the numbers are readable and it worked. In combat the numbers are secret and the addon decided
-from the cached isOnGCD flag, which can stay true when no SPELL_UPDATE_COOLDOWN arrives after the GCD ends. The game's
-own answer (duration object ignoring the GCD, IsZero) is a plain boolean and is now used first."""
+"""Judgement pulled in combat (Paladin, seen live 7 Nov 2026, /scdt debug in combat after the cast): isActive true,
+isOnGCD nil, activeCategory nil, timeUntilEndOfStartRecovery SECRET, duration SECRET, and the cooldown-ignoring-GCD IsZero
+answer is secret too. The addon took that for a wand pause (start recovery, no category) and showed no timer. Now a cast we
+saw (spell ID readable) of a spell whose cooldown length we learned while the numbers were readable is timed from the cast."""
 from mock_env import Client, Checker
 
 t = Checker("judgement_test")
+SP = ["Judgement", "Holy Strike", "Consecration", "Exorcism", "Fear"]
 
 def pal():
-    return Client("PALADIN").boot(["Judgement", "Holy Strike", "Consecration", "Exorcism", "Hammer of Justice"])
+    return Client("PALADIN").boot(SP)
 
-def judge_icon(c):
-    return [i for i in c.icons() if i["tex"] == c.spell_icon("Judgement")]
+def cast(c, name, secs, secret_id=False):
+    """The game's view of a cast in combat: start recovery set (secret), no category, long hidden cooldown."""
+    c.lua.globals().NAME = name
+    c.exe(f"local s = W.spells[NAME]; s.cdStart = W.now; s.cdDur = {secs}; s.gcd = false; s.recovery = true; s.cat = nil")
+    if secret_id:
+        c.exe("FIRE('UNIT_SPELLCAST_SUCCEEDED', 'player', 'guid', Secret())")
+    else:
+        c.exe("FIRE('UNIT_SPELLCAST_SUCCEEDED', 'player', 'guid', W.spells[NAME].id)")
+    c.fire("SPELL_UPDATE_COOLDOWN")
 
+def icon(c, name):
+    return [i for i in c.icons() if i["tex"] == c.spell_icon(name)]
+
+def learn(c, name, secs):
+    c.cooldown(name, secs, secs); c.tick(0.2, 2)       # readable numbers, out of combat
+    c.clear_cooldown(name); c.tick(0.2, 2)
+
+# 1. learned out of combat, pulled with Judgement
 c = pal()
+learn(c, "Judgement", 10)
 c.combat(True); c.tick(0.2, 3)
-j = judge_icon(c)
+j = icon(c, "Judgement")
 t.check("combat, Judgement ready: grayed pinned icon", len(j) == 1 and j[0]["desat"] is True, c.icons())
-
-# cast: GCD and a 10 s cooldown start together; the event sees the spell on the GCD
-c.lua.globals().NAME = "Judgement"
-c.exe("local s = W.spells[NAME]; s.cdStart = W.now; s.cdDur = 10; s.gcd = true")
-c.fire("SPELL_UPDATE_COOLDOWN"); c.tick(0.2, 2)
-# the GCD ends and the game sends no further SPELL_UPDATE_COOLDOWN
-c.exe("W.now = W.now + 1.6; W.spells[NAME].gcd = false")
-c.tick(0.2, 3)
-j = judge_icon(c)
-t.check("first cast in combat, stale GCD flag: the cooldown still starts (duration object, not grayed)",
-        len(j) == 1 and j[0].get("obj") == "Judgement" and j[0]["desat"] is not True, j)
+cast(c, "Judgement", 10); c.tick(0.2, 3)
+j = icon(c, "Judgement")
+t.check("cast in combat (start recovery, no category, secret numbers): the timer starts",
+        len(j) == 1 and j[0]["text"] != "" and j[0]["cdDur"] == 10 and j[0]["desat"] is not True, c.icons())
 t.check("... no error", c.errors() == [], c.errors())
+c.tick(1.0, 4); j = icon(c, "Judgement")
+t.check("... and it keeps counting down", len(j) == 1 and j[0]["text"] != "", c.icons())
+c.exe("W.now = W.now + 20; W.spells['Judgement'].cdDur = 0; W.spells['Judgement'].recovery = false"); c.tick(0.2, 3)
+j = icon(c, "Judgement")
+t.check("cooldown over: back to the grayed ready icon", len(j) == 1 and j[0]["desat"] is True and j[0]["text"] == "", c.icons())
 
-# a real cooldown is asked for without the GCD
-t.check("the object is requested with ignoreGCD", c.ev("W.calls.lastIgnoreGCD") is True, c.ev("W.calls.lastIgnoreGCD"))
+# 2. never seen out of combat: nothing known about its length, so the old (wand) rule applies
+c = pal(); c.combat(True); c.tick(0.2, 2)
+cast(c, "Judgement", 10); c.tick(0.2, 3)
+j = icon(c, "Judgement")
+t.check("cooldown length never learned: no made-up timer", len(j) == 1 and j[0]["desat"] is True and j[0]["text"] == "", c.icons())
 
-# GCD only (no cooldown): nothing
-c2 = pal(); c2.combat(True); c2.tick(0.2, 2)
-c2.gcd("Hammer of Justice"); c2.fire("SPELL_UPDATE_COOLDOWN"); c2.tick(0.2, 2)
-t.check("combat, GCD only: no cooldown icon", c2.spell_icon("Hammer of Justice") not in c2.icon_ids(), c2.icons())
+# 3. wand pause: every spell in start recovery, no cast of ours: still nothing, even for spells with a learned cooldown
+c = Client("WARLOCK").boot(["Shadow Bolt", "Corruption", "Fear"])
+learn(c, "Fear", 30)
+c.combat(True); c.tick(0.2, 2)
+for n in ("Shadow Bolt", "Corruption", "Fear"):
+    c.lua.globals().NAME = n
+    c.exe("local s = W.spells[NAME]; s.cdStart = W.now; s.cdDur = 1.8; s.gcd = false; s.recovery = true")
+c.tick(0.2, 3)
+t.check("wand pause, Fear has a learned cooldown but was not cast: no icon", len(c.icons()) == 0, c.icons())
 
-# answer hidden or missing: the old rules still apply
-for flag in ("isZeroSecret", "noIsZero"):
-    c3 = pal(); c3.exe(f"W.{flag} = true"); c3.combat(True); c3.tick(0.2, 2)
-    c3.cooldown("Holy Strike", 10, 10); c3.tick(0.2, 3)
-    h = [i for i in c3.icons() if i["tex"] == c3.spell_icon("Holy Strike")]
-    t.check(f"{flag}: a plain cooldown still shows, no error", len(h) == 1 and h[0].get("obj") == "Holy Strike" and c3.errors() == [], (c3.icons(), c3.errors()))
+# 4. spell ID hidden in combat: cannot tell which spell was cast, so the old rule stays (and nothing breaks)
+c = pal(); learn(c, "Judgement", 10); c.combat(True); c.tick(0.2, 2)
+cast(c, "Judgement", 10, secret_id=True); c.tick(0.2, 3)
+j = icon(c, "Judgement")
+t.check("secret spell ID: no error, no guessed timer", c.errors() == [] and len(j) == 1 and j[0]["text"] == "", (c.icons(), c.errors()))
 
+# 5. the cooldown length is kept in the saved variables
+c = pal(); learn(c, "Holy Strike", 9)
+t.check("learned length stored in the saved variables", c.ev("SpellCDTrackerDB.cdLearned['Holy Strike']") == 9, c.ev("SpellCDTrackerDB.cdLearned"))
 t.finish()

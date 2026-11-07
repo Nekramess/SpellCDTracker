@@ -32,6 +32,7 @@ local defaults = {
     power = { point = "CENTER", relPoint = "CENTER", x = 0, y = -135 },   -- energy / rage / mana bar (Rogue, Druid, Warrior)
     buffIcons = {},       -- buff group key -> last seen icon
     durations = {},       -- aura name -> last seen duration (for combat timers)
+    cdLearned = {},       -- spell name -> cooldown length seen while the numbers were readable (for casts in combat)
 }
 
 local db
@@ -385,23 +386,10 @@ local function InStartRecovery(info)
     return info.timeUntilEndOfStartRecovery ~= nil and info.activeCategory == nil
 end
 
--- Duration object for the spell's cooldown. ignoreGCD drops the global cooldown / start recovery from it.
-local function GetDurationObject(s, ignoreGCD)
-    if not (C_Spell and C_Spell.GetSpellCooldownDuration) then return nil end
-    local ok, obj = pcall(C_Spell.GetSpellCooldownDuration, s.id, ignoreGCD and true or false)
-    if ok and obj then return obj end
-    ok, obj = pcall(C_Spell.GetSpellCooldownDuration, s.name, ignoreGCD and true or false)
-    if ok then return obj end
-end
-
--- true / false when the game says whether a real cooldown (not just the GCD) is running; nil when it can't be asked
--- or the answer is hidden.
-local function RealCooldownNow(s)
-    local obj = GetDurationObject(s, true)
-    if not (obj and obj.IsZero) then return nil end
-    local ok, z = pcall(obj.IsZero, obj)
-    if not ok or z == nil or issecret(z) then return nil end
-    return not z
+-- Cooldown length learned while the numbers were readable (out of combat, or after combat), used for casts in combat.
+local function LearnedCd(s)
+    local d = db and db.cdLearned and db.cdLearned[s.name]
+    if type(d) == "number" and d > MIN_CD then return d end
 end
 
 local function ReadCooldown(s)
@@ -420,6 +408,7 @@ local function ReadCooldown(s)
     if not (issecret(start) or issecret(dur)) then
         if start and dur and start > 0 and dur > MIN_CD then
             s.cStart, s.cEnd = start, start + dur
+            if db and db.cdLearned and db.cdLearned[s.name] ~= dur then db.cdLearned[s.name] = dur end
             return "known", start, dur
         end
         s.cEnd = nil
@@ -428,18 +417,29 @@ local function ReadCooldown(s)
 
     -- numbers are hidden. A cooldown we saw start earlier is still readable from our cache.
     local now = GetTime()
+    -- A spell we just cast in combat whose cooldown the game reports only as "start recovery" with no category (seen live
+    -- 7 Nov 2026, Judgement: isActive true, startRecovery secret, category nil) would be taken for a wand pause. If we saw
+    -- the cast and know how long its cooldown is, time it ourselves from the cast.
+    if active and recovery and s.castAt then
+        local d = LearnedCd(s)
+        if d and now - s.castAt < d then
+            s.cStart, s.cEnd = s.castAt, s.castAt + d
+            return "known", s.castAt, d
+        end
+    end
     if s.cEnd and s.cEnd > now and active ~= false then
         return "known", s.cStart, s.cEnd - s.cStart
     end
-    if active then
-        -- Is there a real cooldown behind the numbers we cannot read? Ask the game with the GCD (and start recovery)
-        -- left out; IsZero is a plain boolean. This does not depend on the cached isOnGCD flag, which can go stale
-        -- when no SPELL_UPDATE_COOLDOWN arrives after the GCD ends (Judgement pulled in combat, 7 Nov 2026).
-        local real = RealCooldownNow(s)
-        if real ~= nil then return real and "secret" or "none" end
-        if not s.onGCD and not recovery then return "secret" end
-    end
+    if active and not s.onGCD and not recovery then return "secret" end
     return "none"
+end
+
+local function GetDurationObject(s)
+    if not (C_Spell and C_Spell.GetSpellCooldownDuration) then return nil end
+    local ok, obj = pcall(C_Spell.GetSpellCooldownDuration, s.id)
+    if ok and obj then return obj end
+    ok, obj = pcall(C_Spell.GetSpellCooldownDuration, s.name)
+    if ok then return obj end
 end
 
 local function UpdateGCDFlags()
@@ -568,7 +568,7 @@ local function UpdateCooldowns()
             ic.text:SetText("")
             if ic.cd.SetCooldownFromDurationObject then
                 if ic.boundSpell ~= a.s.name or ic.boundGen ~= a.s.gen then
-                    local obj = GetDurationObject(a.s, true)
+                    local obj = GetDurationObject(a.s)
                     if obj then Guard(ic.cd.SetCooldownFromDurationObject, ic.cd, obj) end
                     ic.boundSpell, ic.boundGen = a.s.name, a.s.gen
                 end
@@ -651,6 +651,14 @@ local function RefreshPaladinFromAuras()
 end
 
 -- your own casts are still readable in combat: use them to keep Seal and Aura current
+-- Remember when each tracked spell was last cast (only when the game gives us the spell ID).
+local function NoteCast(spellID)
+    if not spellID or issecret(spellID) then return end
+    local name = SpellNameByID(spellID)
+    local s = name and known[name]
+    if s then s.castAt = GetTime() end
+end
+
 local function OnPlayerCast(spellID)
     if not isPaladin or not spellID or issecret(spellID) then return end
     local name = SpellNameByID(spellID)
@@ -2204,6 +2212,9 @@ local function Debug(arg)
                 print(string.format("    raw: isActive %s, isOnGCD %s, cached onGCD %s, isEnabled %s, category %s, startRecovery %s, duration %s | cooldown ignoring GCD is zero: %s",
                     fv(info.isActive), fv(info.isOnGCD), tostring(found.onGCD), fv(info.isEnabled),
                     fv(info.activeCategory), fv(info.timeUntilEndOfStartRecovery), fv(info.duration), zero))
+                print(string.format("    own timer: learned cooldown %s | last cast seen %s",
+                    LearnedCd(found) and string.format("%.1f s", LearnedCd(found)) or "none yet (use it once outside combat)",
+                    found.castAt and string.format("%.1f s ago", GetTime() - found.castAt) or "never (spell ID hidden or not cast)"))
             end
         end
     end
@@ -2299,6 +2310,7 @@ driver:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         Guard(UpdateGCDFlags)
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         if arg1 == "player" then
+            Guard(NoteCast, arg3)
             Guard(OnPlayerCast, arg3)
             if buffGroups and arg3 and not issecret(arg3) then Guard(OnBuffCast, arg3) end
         end
