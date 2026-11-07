@@ -44,11 +44,39 @@ c.exe("W.now = W.now + 20; W.spells['Judgement'].cdDur = 0; W.spells['Judgement'
 j = icon(c, "Judgement")
 t.check("cooldown over: back to the grayed ready icon", len(j) == 1 and j[0]["desat"] is True and j[0]["text"] == "", c.icons())
 
-# 2. never seen out of combat: nothing known about its length, so the old (wand) rule applies
+# 2. Judgement is seeded with the 10 s from Wowhead's Forever page, so the very first pull works without learning
 c = pal(); c.combat(True); c.tick(0.2, 2)
 cast(c, "Judgement", 10); c.tick(0.2, 3)
 j = icon(c, "Judgement")
-t.check("cooldown length never learned: no made-up timer", len(j) == 1 and j[0]["desat"] is True and j[0]["text"] == "", c.icons())
+t.check("first pull ever (seeded 10 s): the timer starts", len(j) == 1 and j[0]["text"] != "" and j[0]["cdDur"] == 10, c.icons())
+
+# 2b. a spell with no seed and no learned length: nothing made up on the first cast ...
+c = pal(); c.combat(True); c.tick(0.2, 2)
+cast(c, "Holy Strike", 9); c.tick(0.2, 3)
+h = icon(c, "Holy Strike")
+t.check("length unknown: no made-up timer on the first cast", len(h) == 1 and h[0]["text"] == "", c.icons())
+# ... but the cast followed by the game's plain isActive flag turning false measures it, so the NEXT cast is timed
+c.exe("W.now = W.now + 9; W.spells['Holy Strike'].cdDur = 0; W.spells['Holy Strike'].recovery = false"); c.tick(0.2, 3)
+learned = c.ev("SpellCDTrackerDB.cdLearned['Holy Strike']")
+t.check("... the cooldown is measured from cast to ready (about 9 s)", learned is not None and 8.5 <= learned <= 10, learned)
+cast(c, "Holy Strike", 9); c.tick(0.2, 3)
+h = icon(c, "Holy Strike")
+t.check("... and the next cast shows a timer", len(h) == 1 and h[0]["text"] != "" and abs(h[0]["cdDur"] - learned) < 1e-6, c.icons())
+
+# 2c. a short pause after a cast (GCD / wand) is never taken for a cooldown length
+c = pal(); c.combat(True); c.tick(0.2, 2)
+cast(c, "Exorcism", 1.8); c.tick(0.2, 3)
+c.exe("W.now = W.now + 1.9; W.spells['Exorcism'].cdDur = 0; W.spells['Exorcism'].recovery = false"); c.tick(0.2, 3)
+t.check("a 1.9 s pause is not learned as a cooldown", c.ev("SpellCDTrackerDB.cdLearned['Exorcism']") is None, c.ev("SpellCDTrackerDB.cdLearned['Exorcism']"))
+
+# 2d. an old cast and a later wand pause do not teach a length
+c = pal(); c.combat(True); c.tick(0.2, 2)
+cast(c, "Consecration", 0.1); c.exe("W.spells['Consecration'].cdDur = 0; W.spells['Consecration'].recovery = false"); c.tick(0.2, 2)
+c.exe("W.now = W.now + 30")
+c.lua.globals().NAME = "Consecration"
+c.exe("local s = W.spells[NAME]; s.cdStart = W.now; s.cdDur = 1.8; s.recovery = true"); c.tick(0.2, 2)
+c.exe("W.now = W.now + 12; W.spells['Consecration'].cdDur = 0; W.spells['Consecration'].recovery = false"); c.tick(0.2, 3)
+t.check("a pause long after the last cast does not teach a length", c.ev("SpellCDTrackerDB.cdLearned['Consecration']") is None, c.ev("SpellCDTrackerDB.cdLearned['Consecration']"))
 
 # 3. wand pause: every spell in start recovery, no cast of ours: still nothing, even for spells with a learned cooldown
 c = Client("WARLOCK").boot(["Shadow Bolt", "Corruption", "Fear"])

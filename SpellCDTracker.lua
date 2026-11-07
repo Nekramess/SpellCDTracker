@@ -387,9 +387,39 @@ local function InStartRecovery(info)
 end
 
 -- Cooldown length learned while the numbers were readable (out of combat, or after combat), used for casts in combat.
+-- Cooldowns read from Wowhead's Forever spell pages, used until a length has been seen in the game (which then wins).
+local CD_SEED = {
+    ["judgement"] = 10,   -- wowhead.com/forever/spell=20271: "10 sec cooldown" (7 Nov 2026)
+}
+local MEASURE_MIN = 4     -- a measured cooldown shorter than this could be a wand pause: not learned
+
 local function LearnedCd(s)
     local d = db and db.cdLearned and db.cdLearned[s.name]
     if type(d) == "number" and d > MIN_CD then return d end
+    d = CD_SEED[s.name:lower()]
+    if d and d > MIN_CD then return d end
+end
+
+-- A cast we saw, followed by the game's plain isActive flag turning false, measures the cooldown even while the numbers
+-- are secret. Called every tick for spells that are not shown as running.
+local function MeasureCooldown(s, active, now)
+    if active then
+        if not s.sawActive then
+            s.sawActive = true
+            -- only a cast seen just before the spell turned active counts (a wand pause or old cast does not)
+            s.measureFrom = (s.castAt and now - s.castAt < 3) and s.castAt or nil
+        end
+    elseif s.sawActive then
+        s.sawActive = nil
+        local from = s.measureFrom
+        s.measureFrom = nil
+        if from then
+            local d = now - from
+            if d >= MEASURE_MIN and d < 3600 and db and db.cdLearned and not (db.cdLearned[s.name] and db.cdLearned[s.name] > MIN_CD) then
+                db.cdLearned[s.name] = math.floor(d * 10 + 0.5) / 10
+            end
+        end
+    end
 end
 
 local function ReadCooldown(s)
@@ -417,6 +447,7 @@ local function ReadCooldown(s)
 
     -- numbers are hidden. A cooldown we saw start earlier is still readable from our cache.
     local now = GetTime()
+    MeasureCooldown(s, active, now)
     -- A spell we just cast in combat whose cooldown the game reports only as "start recovery" with no category (seen live
     -- 7 Nov 2026, Judgement: isActive true, startRecovery secret, category nil) would be taken for a wand pause. If we saw
     -- the cast and know how long its cooldown is, time it ourselves from the cast.
