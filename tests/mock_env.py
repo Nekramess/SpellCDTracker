@@ -231,9 +231,22 @@ function C_Spell.GetSpellCooldown(x)
 end
 function C_Spell.GetSpellCooldownDuration(x, ignoreGCD)
   W.calls.durObj = W.calls.durObj + 1
+  W.calls.lastIgnoreGCD = ignoreGCD
   local s = lookup(x)
   if not s then return nil end
-  return { isDurationObject = true, spell = s.name }
+  local obj = { isDurationObject = true, spell = s.name }
+  -- IsZero (LuaDurationObjectAPIDocumentation.lua): a plain bool. With ignoreGCD the global cooldown and start recovery
+  -- without a category do not count. W.isZeroSecret / W.noIsZero simulate a client where the answer is hidden or missing.
+  if not W.noIsZero then
+    function obj.IsZero()
+      if W.isZeroSecret then return Secret() end
+      local active = (s.cdDur or 0) > 0 and (s.cdStart + s.cdDur) > W.now
+      if not active then return true end
+      if ignoreGCD and (s.gcd or (s.recovery and not s.cat)) then return true end
+      return false
+    end
+  end
+  return obj
 end
 -- SpellPowerCostInfo (SpellSharedDocumentation.lua) and IsSpellUsable (SpellDocumentation.lua: isUsable, insufficientPower)
 function C_Spell.GetSpellPowerCost(x)

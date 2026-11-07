@@ -385,6 +385,25 @@ local function InStartRecovery(info)
     return info.timeUntilEndOfStartRecovery ~= nil and info.activeCategory == nil
 end
 
+-- Duration object for the spell's cooldown. ignoreGCD drops the global cooldown / start recovery from it.
+local function GetDurationObject(s, ignoreGCD)
+    if not (C_Spell and C_Spell.GetSpellCooldownDuration) then return nil end
+    local ok, obj = pcall(C_Spell.GetSpellCooldownDuration, s.id, ignoreGCD and true or false)
+    if ok and obj then return obj end
+    ok, obj = pcall(C_Spell.GetSpellCooldownDuration, s.name, ignoreGCD and true or false)
+    if ok then return obj end
+end
+
+-- true / false when the game says whether a real cooldown (not just the GCD) is running; nil when it can't be asked
+-- or the answer is hidden.
+local function RealCooldownNow(s)
+    local obj = GetDurationObject(s, true)
+    if not (obj and obj.IsZero) then return nil end
+    local ok, z = pcall(obj.IsZero, obj)
+    if not ok or z == nil or issecret(z) then return nil end
+    return not z
+end
+
 local function ReadCooldown(s)
     local start, dur, active, recovery
     if C_Spell and C_Spell.GetSpellCooldown then
@@ -412,16 +431,15 @@ local function ReadCooldown(s)
     if s.cEnd and s.cEnd > now and active ~= false then
         return "known", s.cStart, s.cEnd - s.cStart
     end
-    if active and not s.onGCD and not recovery then return "secret" end
+    if active then
+        -- Is there a real cooldown behind the numbers we cannot read? Ask the game with the GCD (and start recovery)
+        -- left out; IsZero is a plain boolean. This does not depend on the cached isOnGCD flag, which can go stale
+        -- when no SPELL_UPDATE_COOLDOWN arrives after the GCD ends (Judgement pulled in combat, 7 Nov 2026).
+        local real = RealCooldownNow(s)
+        if real ~= nil then return real and "secret" or "none" end
+        if not s.onGCD and not recovery then return "secret" end
+    end
     return "none"
-end
-
-local function GetDurationObject(s)
-    if not (C_Spell and C_Spell.GetSpellCooldownDuration) then return nil end
-    local ok, obj = pcall(C_Spell.GetSpellCooldownDuration, s.id)
-    if ok and obj then return obj end
-    ok, obj = pcall(C_Spell.GetSpellCooldownDuration, s.name)
-    if ok then return obj end
 end
 
 local function UpdateGCDFlags()
@@ -550,7 +568,7 @@ local function UpdateCooldowns()
             ic.text:SetText("")
             if ic.cd.SetCooldownFromDurationObject then
                 if ic.boundSpell ~= a.s.name or ic.boundGen ~= a.s.gen then
-                    local obj = GetDurationObject(a.s)
+                    local obj = GetDurationObject(a.s, true)
                     if obj then Guard(ic.cd.SetCooldownFromDurationObject, ic.cd, obj) end
                     ic.boundSpell, ic.boundGen = a.s.name, a.s.gen
                 end
