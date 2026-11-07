@@ -2,6 +2,12 @@
 
 Dates are when the change landed on `main` (from git history). Versions before 0.11.0 are from the project notes, not git history.
 
+## 0.14.2 (7 Nov 2026)
+- Fix: the Judgement timer did not start when you pulled with it (or cast it first in combat). The game reports a spell cast in combat as "start recovery" with no cooldown category and hides the numbers, and the tracker took that for a wand pause. The tracker now times a cast it saw from the cooldown length it knows. Seen in the live client: the game does tell the addon which spell you cast while in combat.
+- Judgement starts with its 10 second cooldown (Wowhead's Forever spell page). Other spells learn their length from the game whenever the numbers are readable, or by measuring from your cast until the game says the spell is ready again (only lengths of 4 seconds or more, so wand pauses are never learned).
+- `/scdt debug <spell>` shows the learned cooldown length and when the last cast was seen.
+- Tests: 882 checks; the new Judgement checks fail on 0.14.1 code. Seen working in the live client for Judgement ("appears to be working", 7 Nov 2026); other spells are untested.
+
 ## 0.14.1 (20 Oct 2026)
 - The minimap button now uses the standard LibDBIcon library (embedded in `Libs/`), so minimap button managers such as Leatrix Plus handle it like a normal button instead of calling it a custom button. Confirmed in the live client.
 - Your saved button position and hidden setting carry over. `/scdt minimap on|off` shows or hides it; the square/round/auto options are gone because the library follows square minimaps by itself.

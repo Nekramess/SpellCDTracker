@@ -32,6 +32,7 @@ local defaults = {
     power = { point = "CENTER", relPoint = "CENTER", x = 0, y = -135 },   -- energy / rage / mana bar (Rogue, Druid, Warrior)
     buffIcons = {},       -- buff group key -> last seen icon
     durations = {},       -- aura name -> last seen duration (for combat timers)
+    cdLearned = {},       -- spell name -> cooldown length seen while the numbers were readable (for casts in combat)
 }
 
 local db
@@ -385,6 +386,42 @@ local function InStartRecovery(info)
     return info.timeUntilEndOfStartRecovery ~= nil and info.activeCategory == nil
 end
 
+-- Cooldown length learned while the numbers were readable (out of combat, or after combat), used for casts in combat.
+-- Cooldowns read from Wowhead's Forever spell pages, used until a length has been seen in the game (which then wins).
+local CD_SEED = {
+    ["judgement"] = 10,   -- wowhead.com/forever/spell=20271: "10 sec cooldown" (7 Nov 2026)
+}
+local MEASURE_MIN = 4     -- a measured cooldown shorter than this could be a wand pause: not learned
+
+local function LearnedCd(s)
+    local d = db and db.cdLearned and db.cdLearned[s.name]
+    if type(d) == "number" and d > MIN_CD then return d end
+    d = CD_SEED[s.name:lower()]
+    if d and d > MIN_CD then return d end
+end
+
+-- A cast we saw, followed by the game's plain isActive flag turning false, measures the cooldown even while the numbers
+-- are secret. Called every tick for spells that are not shown as running.
+local function MeasureCooldown(s, active, now)
+    if active then
+        if not s.sawActive then
+            s.sawActive = true
+            -- only a cast seen just before the spell turned active counts (a wand pause or old cast does not)
+            s.measureFrom = (s.castAt and now - s.castAt < 3) and s.castAt or nil
+        end
+    elseif s.sawActive then
+        s.sawActive = nil
+        local from = s.measureFrom
+        s.measureFrom = nil
+        if from then
+            local d = now - from
+            if d >= MEASURE_MIN and d < 3600 and db and db.cdLearned and not (db.cdLearned[s.name] and db.cdLearned[s.name] > MIN_CD) then
+                db.cdLearned[s.name] = math.floor(d * 10 + 0.5) / 10
+            end
+        end
+    end
+end
+
 local function ReadCooldown(s)
     local start, dur, active, recovery
     if C_Spell and C_Spell.GetSpellCooldown then
@@ -401,6 +438,7 @@ local function ReadCooldown(s)
     if not (issecret(start) or issecret(dur)) then
         if start and dur and start > 0 and dur > MIN_CD then
             s.cStart, s.cEnd = start, start + dur
+            if db and db.cdLearned and db.cdLearned[s.name] ~= dur then db.cdLearned[s.name] = dur end
             return "known", start, dur
         end
         s.cEnd = nil
@@ -409,6 +447,17 @@ local function ReadCooldown(s)
 
     -- numbers are hidden. A cooldown we saw start earlier is still readable from our cache.
     local now = GetTime()
+    MeasureCooldown(s, active, now)
+    -- A spell we just cast in combat whose cooldown the game reports only as "start recovery" with no category (seen live
+    -- 7 Nov 2026, Judgement: isActive true, startRecovery secret, category nil) would be taken for a wand pause. If we saw
+    -- the cast and know how long its cooldown is, time it ourselves from the cast.
+    if active and recovery and s.castAt then
+        local d = LearnedCd(s)
+        if d and now - s.castAt < d then
+            s.cStart, s.cEnd = s.castAt, s.castAt + d
+            return "known", s.castAt, d
+        end
+    end
     if s.cEnd and s.cEnd > now and active ~= false then
         return "known", s.cStart, s.cEnd - s.cStart
     end
@@ -633,6 +682,14 @@ local function RefreshPaladinFromAuras()
 end
 
 -- your own casts are still readable in combat: use them to keep Seal and Aura current
+-- Remember when each tracked spell was last cast (only when the game gives us the spell ID).
+local function NoteCast(spellID)
+    if not spellID or issecret(spellID) then return end
+    local name = SpellNameByID(spellID)
+    local s = name and known[name]
+    if s then s.castAt = GetTime() end
+end
+
 local function OnPlayerCast(spellID)
     if not isPaladin or not spellID or issecret(spellID) then return end
     local name = SpellNameByID(spellID)
@@ -2186,6 +2243,9 @@ local function Debug(arg)
                 print(string.format("    raw: isActive %s, isOnGCD %s, cached onGCD %s, isEnabled %s, category %s, startRecovery %s, duration %s | cooldown ignoring GCD is zero: %s",
                     fv(info.isActive), fv(info.isOnGCD), tostring(found.onGCD), fv(info.isEnabled),
                     fv(info.activeCategory), fv(info.timeUntilEndOfStartRecovery), fv(info.duration), zero))
+                print(string.format("    own timer: learned cooldown %s | last cast seen %s",
+                    LearnedCd(found) and string.format("%.1f s", LearnedCd(found)) or "none yet (use it once outside combat)",
+                    found.castAt and string.format("%.1f s ago", GetTime() - found.castAt) or "never (spell ID hidden or not cast)"))
             end
         end
     end
@@ -2281,6 +2341,7 @@ driver:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         Guard(UpdateGCDFlags)
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         if arg1 == "player" then
+            Guard(NoteCast, arg3)
             Guard(OnPlayerCast, arg3)
             if buffGroups and arg3 and not issecret(arg3) then Guard(OnBuffCast, arg3) end
         end
